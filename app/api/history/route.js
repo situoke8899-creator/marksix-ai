@@ -29,16 +29,16 @@ function parseDateTime(value) {
 
   const text = String(value).trim()
 
-  // 16/05/2026
-  const dmy = text.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
-  if (dmy) {
-    return new Date(`${dmy[3]}-${dmy[2]}-${dmy[1]}T00:00:00`).getTime()
-  }
-
   // 2026-05-16
   const ymd = text.match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (ymd) {
     return new Date(`${ymd[1]}-${ymd[2]}-${ymd[3]}T00:00:00`).getTime()
+  }
+
+  // 16/05/2026
+  const dmy = text.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+  if (dmy) {
+    return new Date(`${dmy[3]}-${dmy[2]}-${dmy[1]}T00:00:00`).getTime()
   }
 
   const normal = new Date(text).getTime()
@@ -65,7 +65,7 @@ async function fetchText(url) {
     headers: {
       accept:
         'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
-      'accept-language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+      'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
       'user-agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
     },
@@ -109,6 +109,7 @@ function normalizeHongKongItem(item) {
   const numbers = parseOpenCode(item.numbers || item.openCode)
 
   if (!item.expect) return null
+  if (!item.openTime) return null
   if (numbers.length < 7) return null
 
   return {
@@ -118,7 +119,6 @@ function normalizeHongKongItem(item) {
     numbers: numbers.slice(0, 7),
     wave: '',
     zodiac: '',
-    source: item.source || '',
   }
 }
 
@@ -207,12 +207,12 @@ function stripHtml(html) {
     .trim()
 }
 
-function collectNumbersFromBlock(block) {
+function getNumbersFromText(text) {
+  const matches = String(text || '').match(/\b([1-9]|[1-4]\d)\b/g) || []
   const numbers = []
-  const numberMatches = String(block || '').match(/\b([1-9]|[1-4]\d)\b/g) || []
 
-  for (const n of numberMatches) {
-    const num = Number(n)
+  for (const item of matches) {
+    const num = Number(item)
 
     if (num >= 1 && num <= 49) {
       numbers.push(num)
@@ -224,277 +224,155 @@ function collectNumbersFromBlock(block) {
   return numbers.slice(0, 7)
 }
 
-function parseRowsByExpectAndDate(html, sourceName) {
-  const text = stripHtml(html)
+function convertHongKongDate(dateText) {
+  const text = String(dateText || '').trim()
+
+  // 2026-05-16
+  const ymd = text.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (ymd) return `${ymd[1]}-${ymd[2]}-${ymd[3]}`
+
+  // 16/05/2026
+  const dmy = text.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+  if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`
+
+  return text
+}
+
+function normalizeHongKongExpect(expectText) {
+  const text = String(expectText || '').trim()
+
+  // 52期 -> 26/052
+  const pure = text.match(/^(\d{1,3})期?$/)
+  if (pure) {
+    const issue = String(Number(pure[1])).padStart(3, '0')
+    return `26/${issue}`
+  }
+
+  // 26/052
+  const hk = text.match(/^(\d{2})\/(\d{3})$/)
+  if (hk) return `${hk[1]}/${hk[2]}`
+
+  return text
+}
+
+function parse6hchRowsFromHtmlTable(html) {
   const rows = []
 
-  // 26/052 16/05/2026 11 25 28 36 41 43 22
-  const markerRegex = /(\d{2}\/\d{3})\s+(\d{2}\/\d{2}\/\d{4})/g
-  const markers = []
-  let match
+  const trRegex = /<tr[\s\S]*?<\/tr>/gi
+  const trList = String(html || '').match(trRegex) || []
 
-  while ((match = markerRegex.exec(text)) !== null) {
-    markers.push({
-      index: match.index,
-      expect: match[1],
-      openTime: match[2],
-      endIndex: markerRegex.lastIndex,
+  for (const tr of trList) {
+    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi
+    const cells = []
+    let cellMatch
+
+    while ((cellMatch = cellRegex.exec(tr)) !== null) {
+      cells.push(stripHtml(cellMatch[1]))
+    }
+
+    if (cells.length < 3) continue
+
+    const firstCell = cells[0] || ''
+
+    // 目标格式：2026-05-16 52期
+    const dateMatch = firstCell.match(/(\d{4}-\d{2}-\d{2})/)
+    const issueMatch = firstCell.match(/(\d{1,3})\s*期/)
+
+    if (!dateMatch || !issueMatch) continue
+
+    const openTime = convertHongKongDate(dateMatch[1])
+    const expect = normalizeHongKongExpect(issueMatch[1])
+
+    const normalNumbers = getNumbersFromText(cells[1] || '')
+    const specialNumbers = getNumbersFromText(cells[2] || '')
+
+    if (normalNumbers.length < 6 || specialNumbers.length < 1) continue
+
+    rows.push({
+      expect,
+      openTime,
+      numbers: [...normalNumbers.slice(0, 6), specialNumbers[0]],
     })
   }
 
-  for (let i = 0; i < markers.length; i++) {
-    const current = markers[i]
-    const next = markers[i + 1]
-    const block = text.slice(
-      current.endIndex,
-      next ? next.index : current.endIndex + 700
-    )
-
-    const numbers = collectNumbersFromBlock(block)
-
-    if (numbers.length >= 7) {
-      rows.push({
-        expect: current.expect,
-        openTime: current.openTime,
-        numbers,
-        source: sourceName,
-      })
-    }
-  }
-
   return rows
 }
 
-function parseRowsByDateAndExpect(html, sourceName) {
+function parse6hchRowsFromPlainText(html) {
   const text = stripHtml(html)
   const rows = []
 
-  // Mark Six 16/05/2026 ... No 26/052 ... 11 25 28 36 41 43 22
-  const regex =
-    /(\d{2}\/\d{2}\/\d{4})[\s\S]{0,160}?(?:No|Draw|Draw Number)?\s*(\d{2}\/\d{3})([\s\S]{0,700}?)(?=\d{2}\/\d{2}\/\d{4}[\s\S]{0,160}?(?:No|Draw|Draw Number)?\s*\d{2}\/\d{3}|$)/g
+  // 目标格式：
+  // 2026-05-16 52期 25 马 43 鼠 41 虎 28 兔 11 猴 36 羊 22 鸡
+  const rowRegex =
+    /(\d{4}-\d{2}-\d{2})\s+(\d{1,3})\s*期([\s\S]*?)(?=\d{4}-\d{2}-\d{2}\s+\d{1,3}\s*期|$)/g
 
   let match
 
-  while ((match = regex.exec(text)) !== null) {
-    const openTime = match[1]
-    const expect = match[2]
+  while ((match = rowRegex.exec(text)) !== null) {
+    const openTime = convertHongKongDate(match[1])
+    const expect = normalizeHongKongExpect(match[2])
     const block = match[3] || ''
-
-    const numbers = collectNumbersFromBlock(block)
-
-    if (numbers.length >= 7) {
-      rows.push({
-        expect,
-        openTime,
-        numbers,
-        source: sourceName,
-      })
-    }
-  }
-
-  return rows
-}
-
-function parseLotteryHkHtml(html) {
-  return parseRowsByExpectAndDate(html, 'lottery.hk')
-}
-
-function parseLotteryExtremeHtml(html) {
-  const rows = []
-
-  rows.push(...parseRowsByDateAndExpect(html, 'lotteryextreme.com'))
-  rows.push(...parseRowsByExpectAndDate(html, 'lotteryextreme.com'))
-
-  return rows
-}
-
-function parseLottolyzerHtml(html) {
-  const text = stripHtml(html)
-  const rows = []
-
-  // 页面常见格式：
-  // Draw Date 26/052 Saturday 16th May 2026 Winning No. Extra 11 25 28 36 41 43 + 22
-  const regex =
-    /(\d{2}\/\d{3})\s+([A-Za-z]+)?\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s+(\d{4})([\s\S]{0,900}?)(?=\d{2}\/\d{3}\s+[A-Za-z]+?\s*\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4}|$)/g
-
-  const monthMap = {
-    january: '01',
-    february: '02',
-    march: '03',
-    april: '04',
-    may: '05',
-    june: '06',
-    july: '07',
-    august: '08',
-    september: '09',
-    october: '10',
-    november: '11',
-    december: '12',
-  }
-
-  let match
-
-  while ((match = regex.exec(text)) !== null) {
-    const expect = match[1]
-    const day = String(match[3]).padStart(2, '0')
-    const month = monthMap[String(match[4]).toLowerCase()]
-    const year = match[5]
-    const block = match[6] || ''
-
-    if (!month) continue
-
-    const openTime = `${day}/${month}/${year}`
-    const numbers = collectNumbersFromBlock(block)
+    const numbers = getNumbersFromText(block)
 
     if (numbers.length >= 7) {
       rows.push({
         expect,
         openTime,
-        numbers,
-        source: 'lottolyzer.com',
+        numbers: numbers.slice(0, 7),
       })
     }
   }
 
-  rows.push(...parseRowsByExpectAndDate(html, 'lottolyzer.com'))
-
   return rows
 }
 
-function parseMagayoHtml(html) {
-  const text = stripHtml(html)
+function parse6hchRowsFromJsonLikeText(html) {
   const rows = []
+  const text = String(html || '')
 
-  // 这个源通常没有期号，只作为最后兜底。
-  // 格式类似：14 May 2026 Thursday 23 27 30 34 45 47 Extra 28
-  const regex =
-    /(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})[\s\S]{0,120}?((?:\b[0-4]?\d\b[\s\S]{0,30}?){7})/g
-
-  const monthMap = {
-    january: '01',
-    february: '02',
-    march: '03',
-    april: '04',
-    may: '05',
-    june: '06',
-    july: '07',
-    august: '08',
-    september: '09',
-    october: '10',
-    november: '11',
-    december: '12',
-  }
+  // 兼容页面脚本里出现的 JSON 数据：
+  // "date":"2026-05-16","expect":"52","code":"25,43,41,28,11,36,22"
+  const jsonRegex =
+    /(?:date|openTime|opentime)["']?\s*[:=]\s*["'](\d{4}-\d{2}-\d{2})["'][\s\S]{0,300}?(?:expect|issue|qihao|period)["']?\s*[:=]\s*["']?(\d{1,3}|26\/\d{3})["']?[\s\S]{0,500}?(?:openCode|code|numbers|num)["']?\s*[:=]\s*["']?([0-9,\s]+)["']?/gi
 
   let match
-  let fakeIndex = 1
 
-  while ((match = regex.exec(text)) !== null) {
-    const day = String(match[1]).padStart(2, '0')
-    const month = monthMap[String(match[2]).toLowerCase()]
-    const year = match[3]
-    const block = match[4] || ''
-
-    if (!month) continue
-
-    const openTime = `${day}/${month}/${year}`
-    const numbers = collectNumbersFromBlock(block)
+  while ((match = jsonRegex.exec(text)) !== null) {
+    const openTime = convertHongKongDate(match[1])
+    const expect = normalizeHongKongExpect(match[2])
+    const numbers = getNumbersFromText(match[3])
 
     if (numbers.length >= 7) {
       rows.push({
-        expect: `MAGAYO-${year}${month}${day}-${fakeIndex}`,
+        expect,
         openTime,
-        numbers,
-        source: 'magayo.com',
+        numbers: numbers.slice(0, 7),
       })
-
-      fakeIndex += 1
     }
   }
 
   return rows
 }
 
-async function fetchHongKongFromSources() {
-  const now = new Date()
-  const currentYear = now.getFullYear()
-  const previousYear = currentYear - 1
-
-  const sources = [
-    {
-      name: 'lottery.hk current year',
-      url: `https://lottery.hk/en/mark-six/results/${currentYear}`,
-      parser: parseLotteryHkHtml,
-    },
-    {
-      name: 'lottery.hk previous year',
-      url: `https://lottery.hk/en/mark-six/results/${previousYear}`,
-      parser: parseLotteryHkHtml,
-    },
-    {
-      name: 'lottery.hk latest',
-      url: 'https://lottery.hk/en/mark-six/results/',
-      parser: parseLotteryHkHtml,
-    },
-    {
-      name: 'lotteryextreme archive',
-      url: 'https://www.lotteryextreme.com/marksix/results',
-      parser: parseLotteryExtremeHtml,
-    },
-    {
-      name: 'lotteryextreme latest',
-      url: 'https://www.lotteryextreme.com/marksix/',
-      parser: parseLotteryExtremeHtml,
-    },
-    {
-      name: 'lottolyzer history',
-      url: 'https://en.lottolyzer.com/history/hong-kong/mark-six/page/1/per-page/50/detail-view',
-      parser: parseLottolyzerHtml,
-    },
-    {
-      name: 'lottolyzer latest',
-      url: 'https://en.lottolyzer.com/result/hong-kong/mark-six',
-      parser: parseLottolyzerHtml,
-    },
-    {
-      name: 'magayo recent',
-      url: 'https://www.magayo.com/lotto/hong-kong/mark-six-results/',
-      parser: parseMagayoHtml,
-    },
+function parse6hchHistory(html) {
+  const allRows = [
+    ...parse6hchRowsFromHtmlTable(html),
+    ...parse6hchRowsFromPlainText(html),
+    ...parse6hchRowsFromJsonLikeText(html),
   ]
 
-  let allRows = []
-  const sourceStatus = []
+  const uniqueMap = new Map()
 
-  for (const source of sources) {
-    try {
-      const html = await fetchText(source.url)
-      const rows = source.parser(html)
+  allRows.forEach((item) => {
+    const normalized = normalizeHongKongItem(item)
 
-      sourceStatus.push({
-        name: source.name,
-        url: source.url,
-        count: rows.length,
-        ok: rows.length > 0,
-      })
+    if (!normalized) return
 
-      allRows = allRows.concat(rows)
-    } catch (error) {
-      sourceStatus.push({
-        name: source.name,
-        url: source.url,
-        count: 0,
-        ok: false,
-        error: error.message,
-      })
+    uniqueMap.set(normalized.expect, normalized)
+  })
 
-      console.log(`香港数据源失败：${source.name}`, error.message)
-    }
-  }
-
-  return {
-    rows: allRows,
-    sourceStatus,
-  }
+  return sortHistory(Array.from(uniqueMap.values()))
 }
 
 function buildHongKongNextExpect(history) {
@@ -596,28 +474,14 @@ async function getMacauData() {
 }
 
 async function getHongKongData() {
-  const uniqueMap = new Map()
+  const url = 'https://6hch.com/html/kaihistory.html'
+  const html = await fetchText(url)
 
-  const { rows, sourceStatus } = await fetchHongKongFromSources()
-
-  rows.forEach((item) => {
-    const normalized = normalizeHongKongItem(item)
-
-    if (!normalized?.expect) return
-
-    // 如果是 magayo 这种没有真实期号的兜底源，用日期做 key。
-    const key = String(normalized.expect).startsWith('MAGAYO-')
-      ? `${normalized.openTime}-${normalized.openCode}`
-      : normalized.expect
-
-    uniqueMap.set(key, normalized)
-  })
-
-  const history = sortHistory(Array.from(uniqueMap.values()))
+  const history = parse6hchHistory(html)
 
   if (!history.length) {
     throw new Error(
-      '没有获取到香港历史开奖数据，请稍后刷新重试。可能是备用网址被 Vercel 暂时拦截，或页面结构改变。'
+      '没有从 6hch 获取到香港历史开奖数据。可能是页面数据由接口动态加载，或者 Vercel 当前访问该站被拦截。'
     )
   }
 
@@ -628,8 +492,7 @@ async function getHongKongData() {
   return {
     ok: true,
     play: 'hongkong',
-    source: 'lottery.hk / lotteryextreme / lottolyzer / magayo',
-    sourceStatus,
+    source: '6hch.com',
     latest,
     nextExpect,
     history: history.slice(0, 400),
