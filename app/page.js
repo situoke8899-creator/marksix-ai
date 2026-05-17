@@ -38,12 +38,11 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
 function Ball({ num, count, type, small = false, hit = false, hitType = 'special' }) {
   const wave = getWave(Number(num))
 
-  const outlineColor = hit
+ const outlineColor = hit
   ? hitType === 'normal'
-    ? '#ef4444'
+    ? '#fde68a'
     : '#facc15'
   : undefined
-
   return (
     <div className={`ball-box ${small ? 'small' : ''}`}>
       <div
