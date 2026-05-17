@@ -427,6 +427,31 @@ export default function Page() {
     currentStrategy
   )
 
+  const nextAnalysis =
+    currentStrategy && history.length
+      ? buildRecommend(history, currentStrategy)
+      : null
+
+  const nextExpect = history?.[0]?.expect
+    ? String(Number(history[0].expect) + 1)
+    : ''
+
+  const nextRecommendNumbers = nextAnalysis?.recommendNumbers || []
+  const nextHotNumbers = nextAnalysis?.hotNumbers || []
+  const nextColdNumbers = nextAnalysis?.coldNumbers || []
+
+  const nextRecommendText = formatNumbers(nextRecommendNumbers)
+  const nextHotText = formatNumbers(nextHotNumbers)
+  const nextColdText = formatNumbers(nextColdNumbers)
+
+  const nextFullCopyText = [
+    `下一期期号：${nextExpect}`,
+    `策略：${currentStrategy?.label || ''}`,
+    `下一期36码：${nextRecommendText}`,
+    `热门号：${nextHotText}`,
+    `冷门号：${nextColdText}`,
+  ].join('\n')
+
   const best100Rows = currentStrategy?.result100?.rows || []
   const best50Rows = currentStrategy?.result50?.rows || []
 
@@ -439,7 +464,7 @@ export default function Page() {
   const coldText = formatNumbers(coldNumbers)
 
   const fullCopyText = [
-    `期号：${singleBacktest?.target?.expect || ''}`,
+    `回测期号：${singleBacktest?.target?.expect || ''}`,
     `策略：${currentStrategy?.label || ''}`,
     `36码：${recommendText}`,
     `热门号：${hotText}`,
@@ -480,7 +505,7 @@ export default function Page() {
           <div className="badge">澳门六合彩特码多策略回测</div>
           <h1>36码智能筛选系统</h1>
           <p>
-            自动测试多种36码筛选规则，区分总命中、热码命中、冷码命中，并计算金额盈亏。
+            上方显示下一期推荐号码，下方显示历史回测结果。系统区分总命中、热码命中、冷码命中，并计算金额盈亏。
           </p>
         </div>
 
@@ -503,6 +528,75 @@ export default function Page() {
 
       {data && currentStrategy && (
         <>
+          {nextAnalysis && (
+            <section className="card">
+              <div className="section-head">
+                <div>
+                  <div className="card-title">
+                    下一期推荐36码：第 {nextExpect} 期
+                  </div>
+                  <p className="section-desc">
+                    这里是根据最新已开奖数据生成的下一期推荐号码，不是历史回测。开奖后可以再用回测区验证是否命中。
+                  </p>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '14px' }}>
+                    <CopyButton label="复制下一期36码" text={nextRecommendText} />
+                    <CopyButton label="复制下一期热门号" text={nextHotText} />
+                    <CopyButton label="复制下一期冷门号" text={nextColdText} />
+                    <CopyButton label="复制下一期完整结果" text={nextFullCopyText} />
+                  </div>
+                </div>
+
+                <div className="filter-row">
+                  <button className="active">下一期推荐</button>
+                </div>
+              </div>
+
+              <div className="latest-info">
+                <div>
+                  <span>最新已开奖期号</span>
+                  <strong>第 {history?.[0]?.expect} 期</strong>
+                </div>
+
+                <div>
+                  <span>推荐下一期</span>
+                  <strong>第 {nextExpect} 期</strong>
+                </div>
+
+                <div>
+                  <span>当前策略</span>
+                  <strong>{currentStrategy?.modeLabel}</strong>
+                </div>
+
+                <div>
+                  <span>热门号码</span>
+                  <strong>{nextHotNumbers.length}个</strong>
+                </div>
+
+                <div>
+                  <span>冷门号码</span>
+                  <strong>{nextColdNumbers.length}个</strong>
+                </div>
+
+                <div>
+                  <span>最终推荐</span>
+                  <strong>{nextRecommendNumbers.length}个</strong>
+                </div>
+              </div>
+
+              <div className="ball-grid recommend-grid">
+                {nextRecommendNumbers.map((item) => (
+                  <Ball
+                    key={item.num}
+                    num={item.num}
+                    count={item.count}
+                    type={item.type}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
           <section className="top-grid">
             <div className="card">
               <div className="card-title">当前最佳策略</div>
@@ -783,9 +877,9 @@ export default function Page() {
           <section className="card">
             <div className="section-head">
               <div>
-                <div className="card-title">选择单期回测</div>
+                <div className="card-title">选择历史回测期号</div>
                 <p className="section-desc">
-                  选择某一期，系统会用该期之前的数据按当前策略生成36码，只判断该期最后的特码是否命中。
+                  这里是历史回测，不是下一期推荐。选择某一期，系统会用该期之前的数据按当前策略生成36码，只判断该期最后的特码是否命中。
                 </p>
               </div>
             </div>
@@ -841,7 +935,7 @@ export default function Page() {
               <section className="top-grid">
                 <div className="card latest-card">
                   <div className="card-title">
-                    第 {singleBacktest.target.expect} 期真实开奖
+                    第 {singleBacktest.target.expect} 期历史回测开奖
                   </div>
 
                   <div className="latest-info">
@@ -887,7 +981,7 @@ export default function Page() {
                 </div>
 
                 <div className="card stats-card">
-                  <div className="card-title">该期策略结果</div>
+                  <div className="card-title">该期历史回测结果</div>
 
                   <div className="stats-list">
                     <div>
@@ -922,16 +1016,16 @@ export default function Page() {
               <section className="card">
                 <div className="section-head">
                   <div>
-                    <div className="card-title">当前策略推荐36码</div>
+                    <div className="card-title">本期历史回测36码</div>
                     <p className="section-desc">
-                      该36码由当前策略生成。黄色边框代表该期最后的特码。
+                      这组36码是用于回测第 {singleBacktest.target.expect} 期的，不是下一期推荐。黄色边框代表该期最后的特码。
                     </p>
 
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '14px' }}>
-                      <CopyButton label="复制36码" text={recommendText} />
-                      <CopyButton label="复制热门号" text={hotText} />
-                      <CopyButton label="复制冷门号" text={coldText} />
-                      <CopyButton label="复制完整结果" text={fullCopyText} />
+                      <CopyButton label="复制回测36码" text={recommendText} />
+                      <CopyButton label="复制回测热门号" text={hotText} />
+                      <CopyButton label="复制回测冷门号" text={coldText} />
+                      <CopyButton label="复制回测完整结果" text={fullCopyText} />
                     </div>
                   </div>
 
@@ -970,7 +1064,7 @@ export default function Page() {
 
               <section className="three-grid">
                 <div className="card">
-                  <div className="card-title hot-title">热门号码</div>
+                  <div className="card-title hot-title">回测热门号码</div>
                   <p className="section-desc">当前策略筛选出的高分号码。</p>
 
                   <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
@@ -992,7 +1086,7 @@ export default function Page() {
                 </div>
 
                 <div className="card">
-                  <div className="card-title cold-title">冷门号码</div>
+                  <div className="card-title cold-title">回测冷门号码</div>
                   <p className="section-desc">当前策略筛选出的低分号码。</p>
 
                   <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
