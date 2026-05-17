@@ -221,8 +221,14 @@ function testStrategy(history, strategy, rangeSize) {
 
     const analysis = buildRecommend(beforeHistory, strategy)
     const specialNumber = target.numbers[target.numbers.length - 1]
+
     const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
+    const hotSet = new Set(analysis.hotNumbers.map((item) => item.num))
+    const coldSet = new Set(analysis.coldNumbers.map((item) => item.num))
+
     const hit = recommendSet.has(specialNumber)
+    const hotHit = hotSet.has(specialNumber)
+    const coldHit = coldSet.has(specialNumber)
 
     rows.push({
       expect: target.expect,
@@ -230,18 +236,29 @@ function testStrategy(history, strategy, rangeSize) {
       numbers: target.numbers,
       specialNumber,
       hit,
+      hotHit,
+      coldHit,
       ...analysis,
     })
   }
 
-  const hitCount = rows.filter((item) => item.hit).length
   const testedCount = rows.length
+  const hitCount = rows.filter((item) => item.hit).length
+  const hotHitCount = rows.filter((item) => item.hotHit).length
+  const coldHitCount = rows.filter((item) => item.coldHit).length
+
   const hitRate = testedCount ? Number(((hitCount / testedCount) * 100).toFixed(2)) : 0
+  const hotHitRate = testedCount ? Number(((hotHitCount / testedCount) * 100).toFixed(2)) : 0
+  const coldHitRate = testedCount ? Number(((coldHitCount / testedCount) * 100).toFixed(2)) : 0
 
   return {
     testedCount,
     hitCount,
+    hotHitCount,
+    coldHitCount,
     hitRate,
+    hotHitRate,
+    coldHitRate,
     rows,
   }
 }
@@ -284,13 +301,21 @@ function buildSingleBacktest(history, targetExpect, strategy) {
 
   const analysis = buildRecommend(beforeHistory, strategy)
   const specialNumber = target.numbers[target.numbers.length - 1]
+
   const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
+  const hotSet = new Set(analysis.hotNumbers.map((item) => item.num))
+  const coldSet = new Set(analysis.coldNumbers.map((item) => item.num))
+
   const hit = recommendSet.has(specialNumber)
+  const hotHit = hotSet.has(specialNumber)
+  const coldHit = coldSet.has(specialNumber)
 
   return {
     target,
     specialNumber,
     hit,
+    hotHit,
+    coldHit,
     ...analysis,
   }
 }
@@ -455,7 +480,7 @@ export default function Page() {
           <div className="badge">澳门六合彩特码多策略回测</div>
           <h1>36码智能筛选系统</h1>
           <p>
-            自动测试多种36码筛选规则，寻找近100期和近50期里面特码命中率更高，同时金额回测更好的策略。
+            自动测试多种36码筛选规则，区分总命中、热码命中、冷码命中，并计算金额盈亏。
           </p>
         </div>
 
@@ -492,7 +517,7 @@ export default function Page() {
                 </div>
 
                 <div>
-                  <span>近100期命中率</span>
+                  <span>近100期总命中率</span>
                   <strong>
                     {currentStrategy.result100.hitCount} / {currentStrategy.result100.testedCount}
                     {' '}
@@ -501,12 +526,64 @@ export default function Page() {
                 </div>
 
                 <div>
-                  <span>近50期命中率</span>
+                  <span>近50期总命中率</span>
                   <strong>
                     {currentStrategy.result50.hitCount} / {currentStrategy.result50.testedCount}
                     {' '}
                     = {currentStrategy.result50.hitRate}%
                   </strong>
+                </div>
+              </div>
+
+              <div className="latest-info">
+                <div>
+                  <span>近100期热码命中</span>
+                  <strong>
+                    {currentStrategy.result100.hotHitCount} / {currentStrategy.result100.testedCount}
+                    {' '}
+                    = {currentStrategy.result100.hotHitRate}%
+                  </strong>
+                </div>
+
+                <div>
+                  <span>近100期冷码命中</span>
+                  <strong>
+                    {currentStrategy.result100.coldHitCount} / {currentStrategy.result100.testedCount}
+                    {' '}
+                    = {currentStrategy.result100.coldHitRate}%
+                  </strong>
+                </div>
+
+                <div>
+                  <span>热码 + 冷码</span>
+                  <strong>
+                    {currentStrategy.hotCount} + {currentStrategy.coldCount} = 36码
+                  </strong>
+                </div>
+              </div>
+
+              <div className="latest-info">
+                <div>
+                  <span>近50期热码命中</span>
+                  <strong>
+                    {currentStrategy.result50.hotHitCount} / {currentStrategy.result50.testedCount}
+                    {' '}
+                    = {currentStrategy.result50.hotHitRate}%
+                  </strong>
+                </div>
+
+                <div>
+                  <span>近50期冷码命中</span>
+                  <strong>
+                    {currentStrategy.result50.coldHitCount} / {currentStrategy.result50.testedCount}
+                    {' '}
+                    = {currentStrategy.result50.coldHitRate}%
+                  </strong>
+                </div>
+
+                <div>
+                  <span>算法</span>
+                  <strong>{currentStrategy.modeLabel}</strong>
                 </div>
               </div>
 
@@ -528,23 +605,6 @@ export default function Page() {
                 <div>
                   <span>单码投注</span>
                   <strong>{formatMoney((totalBetPerIssue || 0) / 36)}</strong>
-                </div>
-              </div>
-
-              <div className="latest-info">
-                <div>
-                  <span>统计样本</span>
-                  <strong>前{currentStrategy.sampleSize}期</strong>
-                </div>
-
-                <div>
-                  <span>热门 / 冷门</span>
-                  <strong>热{currentStrategy.hotCount} + 冷{currentStrategy.coldCount}</strong>
-                </div>
-
-                <div>
-                  <span>算法</span>
-                  <strong>{currentStrategy.modeLabel}</strong>
                 </div>
               </div>
             </div>
@@ -666,18 +726,33 @@ export default function Page() {
 
                     <div className="latest-info" style={{ marginBottom: 0 }}>
                       <div>
-                        <span>近100期</span>
+                        <span>近100期总命中</span>
                         <strong>{item.result100.hitCount} / {item.result100.testedCount} = {item.result100.hitRate}%</strong>
                       </div>
 
                       <div>
-                        <span>近50期</span>
+                        <span>近100期热码命中</span>
+                        <strong>{item.result100.hotHitCount} / {item.result100.testedCount} = {item.result100.hotHitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>近100期冷码命中</span>
+                        <strong>{item.result100.coldHitCount} / {item.result100.testedCount} = {item.result100.coldHitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>近50期总命中</span>
                         <strong>{item.result50.hitCount} / {item.result50.testedCount} = {item.result50.hitRate}%</strong>
                       </div>
 
                       <div>
-                        <span>规则</span>
-                        <strong>{item.modeLabel}</strong>
+                        <span>近50期热码命中</span>
+                        <strong>{item.result50.hotHitCount} / {item.result50.testedCount} = {item.result50.hotHitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>近50期冷码命中</span>
+                        <strong>{item.result50.coldHitCount} / {item.result50.testedCount} = {item.result50.coldHitRate}%</strong>
                       </div>
 
                       <div>
@@ -693,41 +768,10 @@ export default function Page() {
                           {formatMoney(finance50.profit)}
                         </strong>
                       </div>
-                    </div>
-
-                    <div className="latest-info" style={{ marginTop: '14px', marginBottom: 0 }}>
-                      <div>
-                        <span>100期总投入</span>
-                        <strong>{formatMoney(finance100.totalCost)}</strong>
-                      </div>
 
                       <div>
-                        <span>100期总回款</span>
-                        <strong>{formatMoney(finance100.totalReturn)}</strong>
-                      </div>
-
-                      <div>
-                        <span>100期收益率</span>
-                        <strong style={{ color: finance100.profit >= 0 ? '#22c55e' : '#f87171' }}>
-                          {finance100.roi}%
-                        </strong>
-                      </div>
-
-                      <div>
-                        <span>50期总投入</span>
-                        <strong>{formatMoney(finance50.totalCost)}</strong>
-                      </div>
-
-                      <div>
-                        <span>50期总回款</span>
-                        <strong>{formatMoney(finance50.totalReturn)}</strong>
-                      </div>
-
-                      <div>
-                        <span>50期收益率</span>
-                        <strong style={{ color: finance50.profit >= 0 ? '#22c55e' : '#f87171' }}>
-                          {finance50.roi}%
-                        </strong>
+                        <span>规则</span>
+                        <strong>{item.modeLabel}</strong>
                       </div>
                     </div>
                   </div>
@@ -776,8 +820,18 @@ export default function Page() {
               </div>
 
               <div>
-                <span>该期特码结果</span>
+                <span>该期总结果</span>
                 <strong>{singleBacktest?.hit ? '命中' : '未命中'}</strong>
+              </div>
+
+              <div>
+                <span>该期热码结果</span>
+                <strong>{singleBacktest?.hotHit ? '热码命中' : '热码未中'}</strong>
+              </div>
+
+              <div>
+                <span>该期冷码结果</span>
+                <strong>{singleBacktest?.coldHit ? '冷码命中' : '冷码未中'}</strong>
               </div>
             </div>
           </section>
@@ -805,7 +859,13 @@ export default function Page() {
 
                     <div>
                       <span>结果</span>
-                      <strong>{singleBacktest.hit ? '命中' : '未命中'}</strong>
+                      <strong>
+                        {singleBacktest.hotHit
+                          ? '热码命中'
+                          : singleBacktest.coldHit
+                            ? '冷码命中'
+                            : '未命中'}
+                      </strong>
                     </div>
                   </div>
 
@@ -847,7 +907,13 @@ export default function Page() {
 
                     <div>
                       <span>特码结果</span>
-                      <strong>{singleBacktest.hit ? '命中' : '未命中'}</strong>
+                      <strong>
+                        {singleBacktest.hotHit
+                          ? '热码命中'
+                          : singleBacktest.coldHit
+                            ? '冷码命中'
+                            : '未命中'}
+                      </strong>
                     </div>
                   </div>
                 </div>
@@ -977,7 +1043,7 @@ export default function Page() {
               <section className="card">
                 <div className="card-title">近100期回测明细</div>
                 <p className="section-desc">
-                  每一期都用它之前的数据生成36码，然后判断该期最后特码是否命中。
+                  每一期都用它之前的数据生成36码，然后判断该期最后特码是否命中，并区分热码 / 冷码。
                 </p>
 
                 <div className="history-list">
@@ -987,7 +1053,8 @@ export default function Page() {
                         <strong>第 {item.expect} 期</strong>
                         <span>{item.openTime}</span>
                         <span style={{ display: 'block', marginTop: '6px', color: item.hit ? '#facc15' : '#a1a1aa' }}>
-                          特码 {String(item.specialNumber).padStart(2, '0')}：{item.hit ? '命中' : '未命中'}
+                          特码 {String(item.specialNumber).padStart(2, '0')}：
+                          {item.hotHit ? '热码命中' : item.coldHit ? '冷码命中' : '未命中'}
                         </span>
                       </div>
 
@@ -1011,7 +1078,7 @@ export default function Page() {
               <section className="card">
                 <div className="card-title">近50期回测明细</div>
                 <p className="section-desc">
-                  每一期都用它之前的数据生成36码，然后判断该期最后特码是否命中。
+                  每一期都用它之前的数据生成36码，然后判断该期最后特码是否命中，并区分热码 / 冷码。
                 </p>
 
                 <div className="history-list">
@@ -1021,7 +1088,8 @@ export default function Page() {
                         <strong>第 {item.expect} 期</strong>
                         <span>{item.openTime}</span>
                         <span style={{ display: 'block', marginTop: '6px', color: item.hit ? '#facc15' : '#a1a1aa' }}>
-                          特码 {String(item.specialNumber).padStart(2, '0')}：{item.hit ? '命中' : '未命中'}
+                          特码 {String(item.specialNumber).padStart(2, '0')}：
+                          {item.hotHit ? '热码命中' : item.coldHit ? '冷码命中' : '未命中'}
                         </span>
                       </div>
 
@@ -1043,7 +1111,7 @@ export default function Page() {
               </section>
 
               <div className="footer-note">
-                回测逻辑：只判断特码是否落入36码，不判断平码。金额回测按“每期总投入 / 36 = 单码投注额”，命中后按赔率回款。历史命中率高不代表下一期一定命中。
+                回测逻辑：只判断特码是否落入36码，并区分热码命中与冷码命中。金额回测按“每期总投入 / 36 = 单码投注额”，命中后按赔率回款。历史命中率高不代表下一期一定命中。
               </div>
             </>
           )}
