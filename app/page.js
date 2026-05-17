@@ -35,14 +35,27 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
   }
 }
 
-function Ball({ num, count, type, small = false, hit = false }) {
+function Ball({ num, count, type, small = false, hit = false, hitType = 'special' }) {
   const wave = getWave(Number(num))
+
+  const outlineColor = hit
+    ? hitType === 'normal'
+      ? '#22c55e'
+      : '#facc15'
+    : undefined
 
   return (
     <div className={`ball-box ${small ? 'small' : ''}`}>
       <div
         className={`ball ${wave}`}
-        style={hit ? { outline: '4px solid #facc15' } : undefined}
+        style={
+          hit
+            ? {
+                outline: `4px solid ${outlineColor}`,
+                boxShadow: `0 0 18px ${outlineColor}`,
+              }
+            : undefined
+        }
       >
         {String(num).padStart(2, '0')}
       </div>
@@ -505,7 +518,7 @@ export default function Page() {
           <div className="badge">澳门六合彩特码多策略回测</div>
           <h1>36码智能筛选系统</h1>
           <p>
-            上方显示下一期推荐号码，下方显示历史回测结果。系统区分总命中、热码命中、冷码命中，并计算金额盈亏。
+            上方显示下一期推荐号码，下方显示历史回测结果。绿色圈代表平码命中36码，黄色圈代表特码命中36码。
           </p>
         </div>
 
@@ -964,19 +977,28 @@ export default function Page() {
                   </div>
 
                   <div className="latest-balls">
-                    {singleBacktest.target.numbers.map((num, index) => (
-                      <React.Fragment key={`${num}-${index}`}>
-                        {index === 6 && <div className="plus">+</div>}
-                        <Ball
-                          num={num}
-                          hit={index === 6 && singleBacktest.hit}
-                        />
-                      </React.Fragment>
-                    ))}
+                    {singleBacktest.target.numbers.map((num, index) => {
+                      const inRecommend = singleBacktest.recommendNumbers?.some(
+                        (recommend) => recommend.num === num
+                      )
+
+                      const isSpecial = index === 6
+
+                      return (
+                        <React.Fragment key={`${num}-${index}`}>
+                          {isSpecial && <div className="plus">+</div>}
+                          <Ball
+                            num={num}
+                            hit={inRecommend}
+                            hitType={isSpecial ? 'special' : 'normal'}
+                          />
+                        </React.Fragment>
+                      )
+                    })}
                   </div>
 
                   <div style={{ marginTop: '20px', color: '#a1a1aa' }}>
-                    黄色边框 = 特码命中36码。这里只判断最后一个特码。
+                    绿色圈 = 平码落入36码；黄色圈 = 特码落入36码。
                   </div>
                 </div>
 
@@ -1018,7 +1040,7 @@ export default function Page() {
                   <div>
                     <div className="card-title">本期历史回测36码</div>
                     <p className="section-desc">
-                      这组36码是用于回测第 {singleBacktest.target.expect} 期的，不是下一期推荐。黄色边框代表该期最后的特码。
+                      这组36码是用于回测第 {singleBacktest.target.expect} 期的，不是下一期推荐。绿色圈代表平码命中36码，黄色圈代表特码命中36码。
                     </p>
 
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '14px' }}>
@@ -1050,15 +1072,23 @@ export default function Page() {
                 </div>
 
                 <div className="ball-grid recommend-grid">
-                  {filteredRecommend.map((item) => (
-                    <Ball
-                      key={item.num}
-                      num={item.num}
-                      count={item.count}
-                      type={item.type}
-                      hit={item.num === singleBacktest.specialNumber}
-                    />
-                  ))}
+                  {filteredRecommend.map((item) => {
+                    const isSpecial = item.num === singleBacktest.specialNumber
+                    const isNormal = singleBacktest.target.numbers
+                      .slice(0, 6)
+                      .includes(item.num)
+
+                    return (
+                      <Ball
+                        key={item.num}
+                        num={item.num}
+                        count={item.count}
+                        type={item.type}
+                        hit={isSpecial || isNormal}
+                        hitType={isSpecial ? 'special' : 'normal'}
+                      />
+                    )
+                  })}
                 </div>
               </section>
 
@@ -1072,16 +1102,24 @@ export default function Page() {
                   </div>
 
                   <div className="ball-grid">
-                    {hotNumbers.map((item) => (
-                      <Ball
-                        key={item.num}
-                        num={item.num}
-                        count={item.count}
-                        type="hot"
-                        small
-                        hit={item.num === singleBacktest.specialNumber}
-                      />
-                    ))}
+                    {hotNumbers.map((item) => {
+                      const isSpecial = item.num === singleBacktest.specialNumber
+                      const isNormal = singleBacktest.target.numbers
+                        .slice(0, 6)
+                        .includes(item.num)
+
+                      return (
+                        <Ball
+                          key={item.num}
+                          num={item.num}
+                          count={item.count}
+                          type="hot"
+                          small
+                          hit={isSpecial || isNormal}
+                          hitType={isSpecial ? 'special' : 'normal'}
+                        />
+                      )
+                    })}
                   </div>
                 </div>
 
@@ -1094,16 +1132,24 @@ export default function Page() {
                   </div>
 
                   <div className="ball-grid">
-                    {coldNumbers.map((item) => (
-                      <Ball
-                        key={item.num}
-                        num={item.num}
-                        count={item.count}
-                        type="cold"
-                        small
-                        hit={item.num === singleBacktest.specialNumber}
-                      />
-                    ))}
+                    {coldNumbers.map((item) => {
+                      const isSpecial = item.num === singleBacktest.specialNumber
+                      const isNormal = singleBacktest.target.numbers
+                        .slice(0, 6)
+                        .includes(item.num)
+
+                      return (
+                        <Ball
+                          key={item.num}
+                          num={item.num}
+                          count={item.count}
+                          type="cold"
+                          small
+                          hit={isSpecial || isNormal}
+                          hitType={isSpecial ? 'special' : 'normal'}
+                        />
+                      )
+                    })}
                   </div>
                 </div>
 
@@ -1137,7 +1183,7 @@ export default function Page() {
               <section className="card">
                 <div className="card-title">近100期回测明细</div>
                 <p className="section-desc">
-                  每一期都用它之前的数据生成36码，然后判断该期最后特码是否命中，并区分热码 / 冷码。
+                  每一期都用它之前的数据生成36码。绿色圈 = 平码落入36码；黄色圈 = 特码落入36码。
                 </p>
 
                 <div className="history-list">
@@ -1153,16 +1199,25 @@ export default function Page() {
                       </div>
 
                       <div className="history-balls">
-                        {item.numbers.map((num, index) => (
-                          <React.Fragment key={`${item.expect}-${num}-${index}`}>
-                            {index === 6 && <span className="history-plus">+</span>}
-                            <Ball
-                              num={num}
-                              small
-                              hit={index === 6 && item.hit}
-                            />
-                          </React.Fragment>
-                        ))}
+                        {item.numbers.map((num, index) => {
+                          const inRecommend = item.recommendNumbers?.some(
+                            (recommend) => recommend.num === num
+                          )
+
+                          const isSpecial = index === 6
+
+                          return (
+                            <React.Fragment key={`${item.expect}-${num}-${index}`}>
+                              {isSpecial && <span className="history-plus">+</span>}
+                              <Ball
+                                num={num}
+                                small
+                                hit={inRecommend}
+                                hitType={isSpecial ? 'special' : 'normal'}
+                              />
+                            </React.Fragment>
+                          )
+                        })}
                       </div>
                     </div>
                   ))}
@@ -1172,7 +1227,7 @@ export default function Page() {
               <section className="card">
                 <div className="card-title">近50期回测明细</div>
                 <p className="section-desc">
-                  每一期都用它之前的数据生成36码，然后判断该期最后特码是否命中，并区分热码 / 冷码。
+                  每一期都用它之前的数据生成36码。绿色圈 = 平码落入36码；黄色圈 = 特码落入36码。
                 </p>
 
                 <div className="history-list">
@@ -1188,16 +1243,25 @@ export default function Page() {
                       </div>
 
                       <div className="history-balls">
-                        {item.numbers.map((num, index) => (
-                          <React.Fragment key={`${item.expect}-${num}-${index}`}>
-                            {index === 6 && <span className="history-plus">+</span>}
-                            <Ball
-                              num={num}
-                              small
-                              hit={index === 6 && item.hit}
-                            />
-                          </React.Fragment>
-                        ))}
+                        {item.numbers.map((num, index) => {
+                          const inRecommend = item.recommendNumbers?.some(
+                            (recommend) => recommend.num === num
+                          )
+
+                          const isSpecial = index === 6
+
+                          return (
+                            <React.Fragment key={`${item.expect}-${num}-${index}`}>
+                              {isSpecial && <span className="history-plus">+</span>}
+                              <Ball
+                                num={num}
+                                small
+                                hit={inRecommend}
+                                hitType={isSpecial ? 'special' : 'normal'}
+                              />
+                            </React.Fragment>
+                          )
+                        })}
                       </div>
                     </div>
                   ))}
@@ -1205,7 +1269,7 @@ export default function Page() {
               </section>
 
               <div className="footer-note">
-                回测逻辑：只判断特码是否落入36码，并区分热码命中与冷码命中。金额回测按“每期总投入 / 36 = 单码投注额”，命中后按赔率回款。历史命中率高不代表下一期一定命中。
+                回测逻辑：绿色圈表示前6个平码落入当期筛选36码；黄色圈表示最后特码落入当期筛选36码。金额回测只按特码命中计算。
               </div>
             </>
           )}
