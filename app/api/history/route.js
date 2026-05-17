@@ -42,7 +42,7 @@ async function fetchJson(url) {
   }
 
   if (text.trim().startsWith('<')) {
-    throw new Error(`接口返回了网页，不是开奖数据：${url}`)
+    throw new Error(`接口返回网页，不是开奖JSON：${url}`)
   }
 
   return JSON.parse(text)
@@ -60,6 +60,69 @@ function normalizeItem(item) {
     numbers,
     wave: item.wave || '',
     zodiac: item.zodiac || '',
+  }
+}
+
+function buildAnalysis(historySource, recentCount = 100) {
+  const recentHistory = historySource.slice(0, recentCount)
+
+  const counts = {}
+
+  for (let i = 1; i <= 49; i++) {
+    counts[i] = 0
+  }
+
+  recentHistory.forEach((item) => {
+    item.numbers.forEach((num) => {
+      counts[num] = (counts[num] || 0) + 1
+    })
+  })
+
+  const ranking = Object.entries(counts).map(([num, count]) => ({
+    num: Number(num),
+    count,
+  }))
+
+  const hotNumbers = [...ranking]
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count
+      return a.num - b.num
+    })
+    .slice(0, 24)
+
+  const coldNumbers = [...ranking]
+    .sort((a, b) => {
+      if (a.count !== b.count) return a.count - b.count
+      return a.num - b.num
+    })
+    .slice(0, 12)
+
+  const recommendMap = new Map()
+
+  hotNumbers.forEach((item) => {
+    recommendMap.set(item.num, {
+      ...item,
+      type: 'hot',
+    })
+  })
+
+  coldNumbers.forEach((item) => {
+    recommendMap.set(item.num, {
+      ...item,
+      type: recommendMap.has(item.num) ? 'hot' : 'cold',
+    })
+  })
+
+  const recommendNumbers = Array.from(recommendMap.values()).sort(
+    (a, b) => a.num - b.num
+  )
+
+  return {
+    recentCount: recentHistory.length,
+    hotNumbers,
+    coldNumbers,
+    recommendNumbers,
+    ranking: ranking.sort((a, b) => a.num - b.num),
   }
 }
 
@@ -98,8 +161,7 @@ export async function GET() {
       uniqueMap.set(normalized.expect, normalized)
     })
 
-    let history = sortHistory(Array.from(uniqueMap.values()))
-    let latest = history[0] || null
+    let latest = null
 
     try {
       const latestJson = await fetchJson('https://macaumarksix.com/api/macaujc2.com')
@@ -109,17 +171,14 @@ export async function GET() {
 
         if (normalizedLatest?.expect) {
           latest = normalizedLatest
-
-          if (!uniqueMap.has(normalizedLatest.expect)) {
-            uniqueMap.set(normalizedLatest.expect, normalizedLatest)
-          }
+          uniqueMap.set(normalizedLatest.expect, normalizedLatest)
         }
       }
     } catch (error) {
       console.log(error.message)
     }
 
-    history = sortHistory(Array.from(uniqueMap.values()))
+    const history = sortHistory(Array.from(uniqueMap.values()))
 
     if (!history.length) {
       throw new Error('没有获取到历史开奖数据，请稍后刷新重试')
@@ -127,59 +186,7 @@ export async function GET() {
 
     latest = latest || history[0]
 
-    const recentCount = 100
-    const recentHistory = history.slice(0, recentCount)
-
-    const counts = {}
-
-    for (let i = 1; i <= 49; i++) {
-      counts[i] = 0
-    }
-
-    recentHistory.forEach((item) => {
-      item.numbers.forEach((num) => {
-        counts[num] = (counts[num] || 0) + 1
-      })
-    })
-
-    const ranking = Object.entries(counts).map(([num, count]) => ({
-      num: Number(num),
-      count,
-    }))
-
-    const hotNumbers = [...ranking]
-      .sort((a, b) => {
-        if (b.count !== a.count) return b.count - a.count
-        return a.num - b.num
-      })
-      .slice(0, 24)
-
-    const coldNumbers = [...ranking]
-      .sort((a, b) => {
-        if (a.count !== b.count) return a.count - b.count
-        return a.num - b.num
-      })
-      .slice(0, 12)
-
-    const recommendMap = new Map()
-
-    hotNumbers.forEach((item) => {
-      recommendMap.set(item.num, {
-        ...item,
-        type: 'hot',
-      })
-    })
-
-    coldNumbers.forEach((item) => {
-      recommendMap.set(item.num, {
-        ...item,
-        type: recommendMap.has(item.num) ? 'hot' : 'cold',
-      })
-    })
-
-    const recommendNumbers = Array.from(recommendMap.values()).sort(
-      (a, b) => a.num - b.num
-    )
+    const currentAnalysis = buildAnalysis(history, 100)
 
     const nextExpect = latest?.expect
       ? String(Number(latest.expect) + 1)
@@ -190,13 +197,10 @@ export async function GET() {
       source: 'macaujc.com',
       latest,
       nextExpect,
-      recentCount: recentHistory.length,
-      hotNumbers,
-      coldNumbers,
-      recommendNumbers,
-      ranking: ranking.sort((a, b) => a.num - b.num),
-      recentHistory: recentHistory.slice(0, 20),
+      history: history.slice(0, 400),
+      recentHistory: history.slice(0, 30),
       updatedAt: new Date().toISOString(),
+      ...currentAnalysis,
     })
   } catch (error) {
     return NextResponse.json(
