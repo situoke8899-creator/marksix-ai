@@ -67,7 +67,7 @@ async function fetchText(url) {
         'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
       'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
       'user-agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/148 Safari/537.36',
     },
   })
 
@@ -90,6 +90,37 @@ async function fetchJson(url) {
   return JSON.parse(text)
 }
 
+async function postFormJson(url, formData) {
+  const body = new URLSearchParams(formData)
+
+  const res = await fetch(url, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: {
+      accept: 'application/json, text/javascript, */*; q=0.01',
+      'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      origin: 'https://6hch.com',
+      referer: 'https://6hch.com/',
+      'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'user-agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/148 Safari/537.36',
+    },
+    body,
+  })
+
+  const text = await res.text()
+
+  if (!res.ok) {
+    throw new Error(`接口请求失败：${url}`)
+  }
+
+  try {
+    return JSON.parse(text)
+  } catch (error) {
+    throw new Error(`接口返回不是JSON：${url}`)
+  }
+}
+
 function normalizeMacauItem(item) {
   const numbers = parseOpenCode(item.openCode)
 
@@ -105,21 +136,161 @@ function normalizeMacauItem(item) {
   }
 }
 
-function normalizeHongKongItem(item) {
-  const numbers = parseOpenCode(item.numbers || item.openCode)
+function normalizeHongKongExpect(issue, openTime) {
+  const issueText = String(issue || '').trim()
 
-  if (!item.expect) return null
-  if (!item.openTime) return null
+  // 如果接口本身返回 26/052
+  const hk = issueText.match(/^(\d{2})\/(\d{3})$/)
+  if (hk) return `${hk[1]}/${hk[2]}`
+
+  // 如果接口返回 2026052 / 2026052期
+  const full = issueText.match(/^20(\d{2})(\d{3})/)
+  if (full) return `${full[1]}/${full[2]}`
+
+  // 如果接口返回 52 / 052 / 52期，按开奖年份后两位补成 26/052
+  const pure = issueText.match(/(\d{1,3})/)
+  if (pure) {
+    const yearMatch = String(openTime || '').match(/^20(\d{2})/)
+    const yearPart = yearMatch ? yearMatch[1] : String(new Date().getFullYear()).slice(-2)
+    const issuePart = String(Number(pure[1])).padStart(3, '0')
+    return `${yearPart}/${issuePart}`
+  }
+
+  return issueText
+}
+
+function getHongKongOpenTime(item) {
+  return (
+    item.openTime ||
+    item.open_time ||
+    item.openDate ||
+    item.open_date ||
+    item.date ||
+    item.kjTime ||
+    item.kj_time ||
+    item.time ||
+    ''
+  )
+}
+
+function getHongKongIssue(item) {
+  return (
+    item.expect ||
+    item.issue ||
+    item.qihao ||
+    item.period ||
+    item.number ||
+    item.yearNo ||
+    item.year_no ||
+    item.kjNo ||
+    item.kj_no ||
+    item.preDrawIssue ||
+    item.pre_draw_issue ||
+    ''
+  )
+}
+
+function getHongKongNumbers(item) {
+  const possibleCode =
+    item.openCode ||
+    item.open_code ||
+    item.code ||
+    item.codes ||
+    item.numbers ||
+    item.numberList ||
+    item.number_list ||
+    item.result ||
+    item.openResult ||
+    item.open_result ||
+    item.lotteryDrawResult ||
+    ''
+
+  let numbers = parseOpenCode(possibleCode)
+
+  if (numbers.length >= 7) return numbers.slice(0, 7)
+
+  const normalFields = [
+    item.zm,
+    item.zhengma,
+    item.normal,
+    item.normalCode,
+    item.normal_code,
+    item.red,
+    item.openCodeList,
+  ]
+
+  for (const field of normalFields) {
+    const parsed = parseOpenCode(field)
+    if (parsed.length >= 6) {
+      numbers = parsed.slice(0, 6)
+      break
+    }
+  }
+
+  const special =
+    item.tm ||
+    item.tema ||
+    item.special ||
+    item.specialCode ||
+    item.special_code ||
+    item.sx ||
+    item.blue
+
+  const specialNumber = parseOpenCode(special)[0]
+
+  if (numbers.length >= 6 && specialNumber) {
+    return [...numbers.slice(0, 6), specialNumber]
+  }
+
+  // 兜底：把整个对象转成文本，从里面提取 1-49 的号码
+  const text = JSON.stringify(item)
+  numbers = parseOpenCode(text.replace(/[^0-9,]/g, ','))
+
+  return numbers.slice(0, 7)
+}
+
+function normalizeHongKongItem(item) {
+  const openTime = getHongKongOpenTime(item)
+  const rawIssue = getHongKongIssue(item)
+  const numbers = getHongKongNumbers(item)
+
+  if (!openTime) return null
+  if (!rawIssue) return null
   if (numbers.length < 7) return null
 
+  const expect = normalizeHongKongExpect(rawIssue, openTime)
+
   return {
-    expect: String(item.expect || ''),
-    openTime: item.openTime || '',
+    expect,
+    openTime,
     openCode: numbers.slice(0, 7).join(','),
     numbers: numbers.slice(0, 7),
     wave: '',
     zodiac: '',
   }
+}
+
+function extractArrayFromAnyJson(json) {
+  if (Array.isArray(json)) return json
+
+  const candidates = [
+    json?.data,
+    json?.data?.list,
+    json?.data?.rows,
+    json?.data?.records,
+    json?.result,
+    json?.result?.list,
+    json?.result?.rows,
+    json?.rows,
+    json?.list,
+    json?.content,
+  ]
+
+  for (const item of candidates) {
+    if (Array.isArray(item)) return item
+  }
+
+  return []
 }
 
 function buildAnalysis(historySource, recentCount = 100) {
@@ -185,204 +356,12 @@ function buildAnalysis(historySource, recentCount = 100) {
   }
 }
 
-function stripHtml(html) {
-  return String(html || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, ' ')
-    .replace(/<\/p>/gi, ' ')
-    .replace(/<\/div>/gi, ' ')
-    .replace(/<\/li>/gi, ' ')
-    .replace(/<\/td>/gi, ' ')
-    .replace(/<\/tr>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&#x2F;/g, '/')
-    .replace(/&#47;/g, '/')
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function getNumbersFromText(text) {
-  const matches = String(text || '').match(/\b([1-9]|[1-4]\d)\b/g) || []
-  const numbers = []
-
-  for (const item of matches) {
-    const num = Number(item)
-
-    if (num >= 1 && num <= 49) {
-      numbers.push(num)
-    }
-
-    if (numbers.length >= 7) break
-  }
-
-  return numbers.slice(0, 7)
-}
-
-function convertHongKongDate(dateText) {
-  const text = String(dateText || '').trim()
-
-  // 2026-05-16
-  const ymd = text.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (ymd) return `${ymd[1]}-${ymd[2]}-${ymd[3]}`
-
-  // 16/05/2026
-  const dmy = text.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
-  if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`
-
-  return text
-}
-
-function normalizeHongKongExpect(expectText) {
-  const text = String(expectText || '').trim()
-
-  // 52期 -> 26/052
-  const pure = text.match(/^(\d{1,3})期?$/)
-  if (pure) {
-    const issue = String(Number(pure[1])).padStart(3, '0')
-    return `26/${issue}`
-  }
-
-  // 26/052
-  const hk = text.match(/^(\d{2})\/(\d{3})$/)
-  if (hk) return `${hk[1]}/${hk[2]}`
-
-  return text
-}
-
-function parse6hchRowsFromHtmlTable(html) {
-  const rows = []
-
-  const trRegex = /<tr[\s\S]*?<\/tr>/gi
-  const trList = String(html || '').match(trRegex) || []
-
-  for (const tr of trList) {
-    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi
-    const cells = []
-    let cellMatch
-
-    while ((cellMatch = cellRegex.exec(tr)) !== null) {
-      cells.push(stripHtml(cellMatch[1]))
-    }
-
-    if (cells.length < 3) continue
-
-    const firstCell = cells[0] || ''
-
-    // 目标格式：2026-05-16 52期
-    const dateMatch = firstCell.match(/(\d{4}-\d{2}-\d{2})/)
-    const issueMatch = firstCell.match(/(\d{1,3})\s*期/)
-
-    if (!dateMatch || !issueMatch) continue
-
-    const openTime = convertHongKongDate(dateMatch[1])
-    const expect = normalizeHongKongExpect(issueMatch[1])
-
-    const normalNumbers = getNumbersFromText(cells[1] || '')
-    const specialNumbers = getNumbersFromText(cells[2] || '')
-
-    if (normalNumbers.length < 6 || specialNumbers.length < 1) continue
-
-    rows.push({
-      expect,
-      openTime,
-      numbers: [...normalNumbers.slice(0, 6), specialNumbers[0]],
-    })
-  }
-
-  return rows
-}
-
-function parse6hchRowsFromPlainText(html) {
-  const text = stripHtml(html)
-  const rows = []
-
-  // 目标格式：
-  // 2026-05-16 52期 25 马 43 鼠 41 虎 28 兔 11 猴 36 羊 22 鸡
-  const rowRegex =
-    /(\d{4}-\d{2}-\d{2})\s+(\d{1,3})\s*期([\s\S]*?)(?=\d{4}-\d{2}-\d{2}\s+\d{1,3}\s*期|$)/g
-
-  let match
-
-  while ((match = rowRegex.exec(text)) !== null) {
-    const openTime = convertHongKongDate(match[1])
-    const expect = normalizeHongKongExpect(match[2])
-    const block = match[3] || ''
-    const numbers = getNumbersFromText(block)
-
-    if (numbers.length >= 7) {
-      rows.push({
-        expect,
-        openTime,
-        numbers: numbers.slice(0, 7),
-      })
-    }
-  }
-
-  return rows
-}
-
-function parse6hchRowsFromJsonLikeText(html) {
-  const rows = []
-  const text = String(html || '')
-
-  // 兼容页面脚本里出现的 JSON 数据：
-  // "date":"2026-05-16","expect":"52","code":"25,43,41,28,11,36,22"
-  const jsonRegex =
-    /(?:date|openTime|opentime)["']?\s*[:=]\s*["'](\d{4}-\d{2}-\d{2})["'][\s\S]{0,300}?(?:expect|issue|qihao|period)["']?\s*[:=]\s*["']?(\d{1,3}|26\/\d{3})["']?[\s\S]{0,500}?(?:openCode|code|numbers|num)["']?\s*[:=]\s*["']?([0-9,\s]+)["']?/gi
-
-  let match
-
-  while ((match = jsonRegex.exec(text)) !== null) {
-    const openTime = convertHongKongDate(match[1])
-    const expect = normalizeHongKongExpect(match[2])
-    const numbers = getNumbersFromText(match[3])
-
-    if (numbers.length >= 7) {
-      rows.push({
-        expect,
-        openTime,
-        numbers: numbers.slice(0, 7),
-      })
-    }
-  }
-
-  return rows
-}
-
-function parse6hchHistory(html) {
-  const allRows = [
-    ...parse6hchRowsFromHtmlTable(html),
-    ...parse6hchRowsFromPlainText(html),
-    ...parse6hchRowsFromJsonLikeText(html),
-  ]
-
-  const uniqueMap = new Map()
-
-  allRows.forEach((item) => {
-    const normalized = normalizeHongKongItem(item)
-
-    if (!normalized) return
-
-    uniqueMap.set(normalized.expect, normalized)
-  })
-
-  return sortHistory(Array.from(uniqueMap.values()))
-}
-
 function buildHongKongNextExpect(history) {
   const latest = history?.[0]
 
   if (!latest?.expect) return '等待下期开奖'
 
   const expectText = String(latest.expect)
-
-  // 26/052 -> 26/053
   const hkMatch = expectText.match(/^(\d{2})\/(\d{3})$/)
 
   if (hkMatch) {
@@ -474,14 +453,55 @@ async function getMacauData() {
 }
 
 async function getHongKongData() {
-  const url = 'https://6hch.com/html/kaihistory.html'
-  const html = await fetchText(url)
+  const now = new Date()
+  const currentYear = now.getFullYear()
+  const years = [currentYear, currentYear - 1, currentYear - 2]
 
-  const history = parse6hchHistory(html)
+  const uniqueMap = new Map()
+  const sourceStatus = []
+
+  for (const year of years) {
+    try {
+      const json = await postFormJson(
+        'https://1680660.com/smallSix/findSmallSixHistory.do',
+        {
+          year: String(year),
+          type: '1',
+        }
+      )
+
+      const list = extractArrayFromAnyJson(json)
+
+      sourceStatus.push({
+        year,
+        ok: list.length > 0,
+        count: list.length,
+      })
+
+      list.forEach((item) => {
+        const normalized = normalizeHongKongItem(item)
+
+        if (!normalized?.expect) return
+
+        uniqueMap.set(normalized.expect, normalized)
+      })
+    } catch (error) {
+      sourceStatus.push({
+        year,
+        ok: false,
+        count: 0,
+        error: error.message,
+      })
+
+      console.log(`香港接口抓取失败：${year}`, error.message)
+    }
+  }
+
+  const history = sortHistory(Array.from(uniqueMap.values()))
 
   if (!history.length) {
     throw new Error(
-      '没有从 6hch 获取到香港历史开奖数据。可能是页面数据由接口动态加载，或者 Vercel 当前访问该站被拦截。'
+      '没有从香港接口获取到历史开奖数据。请打开 Network 的 Response，把 findSmallSixHistory.do 返回内容截图发我。'
     )
   }
 
@@ -492,7 +512,8 @@ async function getHongKongData() {
   return {
     ok: true,
     play: 'hongkong',
-    source: '6hch.com',
+    source: '1680660.com/smallSix/findSmallSixHistory.do',
+    sourceStatus,
     latest,
     nextExpect,
     history: history.slice(0, 400),
