@@ -6,6 +6,21 @@ const redWave = [1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46]
 const blueWave = [3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48]
 const greenWave = [5, 6, 11, 16, 17, 21, 22, 27, 28, 32, 33, 38, 39, 43, 44, 49]
 
+const PLAY_CONFIG = {
+  macau: {
+    key: 'macau',
+    name: '澳门',
+    badge: '澳门六合彩特码多策略回测',
+    api: '/api/history?play=macau',
+  },
+  hongkong: {
+    key: 'hongkong',
+    name: '香港',
+    badge: '香港六合彩特码多策略回测',
+    api: '/api/history?play=hongkong',
+  },
+}
+
 function getWave(num) {
   if (redWave.includes(Number(num))) return 'red'
   if (blueWave.includes(Number(num))) return 'blue'
@@ -15,6 +30,23 @@ function getWave(num) {
 function formatMoney(value) {
   const num = Number(value || 0)
   return `¥${num.toFixed(2)}`
+}
+
+
+function getNextExpectByPlay(history, data, currentPlay) {
+  if (data?.nextExpect) return data.nextExpect
+  if (!history?.[0]?.expect) return ''
+
+  const latestExpect = String(history[0].expect)
+
+  if (currentPlay === 'macau') {
+    const num = Number(latestExpect)
+    if (!Number.isNaN(num)) return String(num + 1)
+    return latestExpect
+  }
+
+  // 香港不是每天开奖，最好由后端返回 nextExpect。
+  return '等待下期开奖'
 }
 
 function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 47) {
@@ -68,6 +100,31 @@ function Ball({ num, count, type, small = false, hit = false, hitType = 'special
           {type === 'hot' ? '热' : '冷'}
         </div>
       )}
+    </div>
+  )
+}
+
+
+function PlaySwitch({ currentPlay, onChange }) {
+  return (
+    <div className="play-switch">
+      <button
+        type="button"
+        className={`play-box macau ${currentPlay === 'macau' ? 'active' : ''}`}
+        onClick={() => onChange('macau')}
+        title="点击进入澳门玩法"
+      >
+        澳门玩法
+      </button>
+
+      <button
+        type="button"
+        className={`play-box hongkong ${currentPlay === 'hongkong' ? 'active' : ''}`}
+        onClick={() => onChange('hongkong')}
+        title="点击进入香港玩法"
+      >
+        香港玩法
+      </button>
     </div>
   )
 }
@@ -379,6 +436,14 @@ function CopyButton({ label, text }) {
 }
 
 export default function Page() {
+  const [currentPlay, setCurrentPlay] = React.useState(() => {
+    if (typeof window === 'undefined') return 'macau'
+
+    const params = new URLSearchParams(window.location.search)
+    const play = params.get('play')
+
+    return play === 'hongkong' ? 'hongkong' : 'macau'
+  })
   const [data, setData] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
@@ -388,12 +453,14 @@ export default function Page() {
   const [totalBetPerIssue, setTotalBetPerIssue] = React.useState(3600)
   const [odds, setOdds] = React.useState(47)
 
+  const playConfig = PLAY_CONFIG[currentPlay]
+
   const loadData = async () => {
     try {
       setLoading(true)
       setError('')
 
-      const res = await fetch('/api/history', {
+      const res = await fetch(playConfig.api, {
         cache: 'no-store',
       })
 
@@ -405,7 +472,7 @@ export default function Page() {
 
       setData(json)
 
-      if (!selectedExpect && json.history?.[0]?.expect) {
+      if (json.history?.[0]?.expect) {
         setSelectedExpect(json.history[0].expect)
       }
     } catch (err) {
@@ -415,9 +482,35 @@ export default function Page() {
     }
   }
 
+  const changePlay = (play) => {
+    if (!PLAY_CONFIG[play]) return
+
+    setCurrentPlay(play)
+    setData(null)
+    setSelectedExpect('')
+    setSelectedStrategyId('auto')
+    setFilter('all')
+
+    if (typeof window !== 'undefined') {
+      const url = `${window.location.pathname}?play=${play}`
+      window.history.pushState(null, '', url)
+    }
+  }
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const params = new URLSearchParams(window.location.search)
+    const play = params.get('play')
+
+    if (play === 'hongkong' || play === 'macau') {
+      setCurrentPlay(play)
+    }
+  }, [])
+
   React.useEffect(() => {
     loadData()
-  }, [])
+  }, [currentPlay])
 
   const history = data?.history || []
 
@@ -444,9 +537,7 @@ export default function Page() {
       ? buildRecommend(history, currentStrategy)
       : null
 
-  const nextExpect = history?.[0]?.expect
-    ? String(Number(history[0].expect) + 1)
-    : ''
+  const nextExpect = getNextExpectByPlay(history, data, currentPlay)
 
   const nextRecommendNumbers = nextAnalysis?.recommendNumbers || []
   const nextHotNumbers = nextAnalysis?.hotNumbers || []
@@ -457,6 +548,7 @@ export default function Page() {
   const nextColdText = formatNumbers(nextColdNumbers)
 
   const nextFullCopyText = [
+    `玩法：${playConfig.name}`,
     `下一期期号：${nextExpect}`,
     `策略：${currentStrategy?.label || ''}`,
     `下一期36码：${nextRecommendText}`,
@@ -476,6 +568,7 @@ export default function Page() {
   const coldText = formatNumbers(coldNumbers)
 
   const fullCopyText = [
+    `玩法：${playConfig.name}`,
     `回测期号：${singleBacktest?.target?.expect || ''}`,
     `策略：${currentStrategy?.label || ''}`,
     `36码：${recommendText}`,
@@ -512,13 +605,56 @@ export default function Page() {
 
   return (
     <main className="page">
+      <style jsx>{`
+        .play-switch {
+          display: flex;
+          gap: 18px;
+          margin-top: 18px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .play-box {
+          min-width: 120px;
+          height: 44px;
+          padding: 0 28px;
+          border-radius: 4px;
+          background: rgba(15, 23, 42, 0.25);
+          color: #fff;
+          font-weight: 800;
+          font-size: 16px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .play-box.macau {
+          border: 4px solid #ef4444;
+        }
+
+        .play-box.hongkong {
+          border: 4px solid #52ff00;
+        }
+
+        .play-box:hover {
+          transform: translateY(-1px);
+          opacity: 0.9;
+        }
+
+        .play-box.active {
+          box-shadow: 0 0 20px rgba(250, 204, 21, 0.65);
+          background: rgba(250, 204, 21, 0.12);
+        }
+      `}</style>
+
       <section className="hero">
         <div>
-          <div className="badge">澳门六合彩特码多策略回测</div>
+          <div className="badge">{playConfig.badge}</div>
           <h1>36码智能筛选系统</h1>
           <p>
             上方显示下一期推荐号码，下方显示历史回测结果。绿色圈代表平码命中36码，黄色圈代表特码命中36码。
           </p>
+
+          <PlaySwitch currentPlay={currentPlay} onChange={changePlay} />
         </div>
 
         <button className="refresh-btn" onClick={loadData} disabled={loading}>
@@ -534,7 +670,7 @@ export default function Page() {
 
       {loading && !data && (
         <div className="loading-card">
-          正在抓取澳门六合彩开奖数据，请稍等...
+          正在抓取{playConfig.name}六合彩开奖数据，请稍等...
         </div>
       )}
 
@@ -545,7 +681,7 @@ export default function Page() {
               <div className="section-head">
                 <div>
                   <div className="card-title">
-                    下一期推荐36码：第 {nextExpect} 期
+                    {playConfig.name}下一期推荐36码：第 {nextExpect} 期
                   </div>
                   <p className="section-desc">
                     这里是根据最新已开奖数据生成的下一期推荐号码，不是历史回测。开奖后可以再用回测区验证是否命中。
