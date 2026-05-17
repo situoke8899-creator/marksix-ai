@@ -29,13 +29,13 @@ function parseDateTime(value) {
 
   const text = String(value).trim()
 
-  // 16/05/2026
+  // 例如：16/05/2026
   const dmy = text.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
   if (dmy) {
     return new Date(`${dmy[3]}-${dmy[2]}-${dmy[1]}T00:00:00`).getTime()
   }
 
-  // 2026-05-16
+  // 例如：2026-05-16
   const normal = new Date(text).getTime()
   return Number.isFinite(normal) ? normal : 0
 }
@@ -92,7 +92,7 @@ function normalizeMacauItem(item) {
     expect: String(item.expect || ''),
     openTime: item.openTime || '',
     openCode: numbers.join(','),
-    numbers,
+    numbers: numbers.slice(0, 7),
     wave: item.wave || '',
     zodiac: item.zodiac || '',
   }
@@ -193,7 +193,8 @@ function parseHongKongStaticHtml(html) {
   const text = stripHtml(html)
   const rows = []
 
-  // 格式示例：26/052 16/05/2026 11 25 28 36 41 43 22
+  // 目标格式类似：
+  // 26/052 16/05/2026 11 25 28 36 41 43 + 22
   const regex =
     /(\d{2}\/\d{3})\s+(\d{2}\/\d{2}\/\d{4})([\s\S]*?)(?=\d{2}\/\d{3}\s+\d{2}\/\d{2}\/\d{4}|$)/g
 
@@ -209,6 +210,7 @@ function parseHongKongStaticHtml(html) {
 
     for (const n of numberMatches) {
       const num = Number(n)
+
       if (num >= 1 && num <= 49) {
         numbers.push(num)
       }
@@ -226,39 +228,6 @@ function parseHongKongStaticHtml(html) {
   }
 
   return rows
-}
-
-async function fetchHongKongFromOfficialByPlaywright() {
-  try {
-    const { chromium } = await import('playwright')
-
-    const browser = await chromium.launch({
-      headless: true,
-    })
-
-    const page = await browser.newPage({
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
-    })
-
-    await page.goto('https://bet.hkjc.com/ch/marksix/results', {
-      waitUntil: 'networkidle',
-      timeout: 30000,
-    })
-
-    await page.waitForTimeout(3000)
-
-    const bodyText = await page.locator('body').innerText({
-      timeout: 10000,
-    })
-
-    await browser.close()
-
-    return parseHongKongStaticHtml(bodyText)
-  } catch (error) {
-    console.log('香港官方页面 Playwright 抓取失败：', error.message)
-    return []
-  }
 }
 
 async function fetchHongKongFromStaticSource() {
@@ -369,29 +338,15 @@ async function getMacauData() {
 async function getHongKongData() {
   const uniqueMap = new Map()
 
-  // 第一优先：尝试官方 HKJC 页面。如果你本地没有安装 Playwright，会自动跳过。
-  const officialRows = await fetchHongKongFromOfficialByPlaywright()
+  const staticRows = await fetchHongKongFromStaticSource()
 
-  officialRows.forEach((item) => {
+  staticRows.forEach((item) => {
     const normalized = normalizeHongKongItem(item)
 
     if (!normalized?.expect) return
 
     uniqueMap.set(normalized.expect, normalized)
   })
-
-  // 第二优先：备用静态页面，保证前端能稳定拿到香港历史开奖。
-  if (uniqueMap.size < 80) {
-    const staticRows = await fetchHongKongFromStaticSource()
-
-    staticRows.forEach((item) => {
-      const normalized = normalizeHongKongItem(item)
-
-      if (!normalized?.expect) return
-
-      uniqueMap.set(normalized.expect, normalized)
-    })
-  }
 
   const history = sortHistory(Array.from(uniqueMap.values()))
 
@@ -402,13 +357,14 @@ async function getHongKongData() {
   const latest = history[0]
   const currentAnalysis = buildAnalysis(history, 100)
 
-  // 香港不是每天开奖，下一期期号不强行 +1；如果后面你要精准下期开奖期号，可以再单独抓 HKJC 下期开奖区。
+  // 香港不是每天开奖，所以这里先不强行 +1。
+  // 后面如果你要显示准确“下一期开奖日期/期号”，再单独接香港官方开奖日历。
   const nextExpect = '等待下期开奖'
 
   return {
     ok: true,
     play: 'hongkong',
-    source: 'hkjc / lottery.hk',
+    source: 'lottery.hk',
     latest,
     nextExpect,
     history: history.slice(0, 400),
