@@ -6,32 +6,61 @@ export const revalidate = 0
 function parseOpenCode(openCode) {
   if (!openCode) return []
 
+  if (Array.isArray(openCode)) {
+    return openCode
+      .map((n) => Number(n))
+      .filter((n) => Number.isInteger(n) && n >= 1 && n <= 49)
+  }
+
   return String(openCode)
     .split(',')
     .map((n) => Number(String(n).trim()))
     .filter((n) => Number.isInteger(n) && n >= 1 && n <= 49)
 }
 
+function parseExpectOrder(expect) {
+  const text = String(expect || '')
+  const onlyNumber = Number(text.replace(/\D/g, ''))
+  return Number.isFinite(onlyNumber) ? onlyNumber : 0
+}
+
+function parseDateTime(value) {
+  if (!value) return 0
+
+  const text = String(value).trim()
+
+  // 16/05/2026
+  const dmy = text.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+  if (dmy) {
+    return new Date(`${dmy[3]}-${dmy[2]}-${dmy[1]}T00:00:00`).getTime()
+  }
+
+  // 2026-05-16
+  const normal = new Date(text).getTime()
+  return Number.isFinite(normal) ? normal : 0
+}
+
 function sortHistory(list) {
   return [...list].sort((a, b) => {
-    const ea = Number(a.expect || 0)
-    const eb = Number(b.expect || 0)
+    const tb = parseDateTime(b.openTime)
+    const ta = parseDateTime(a.openTime)
 
-    if (eb !== ea) return eb - ea
+    if (tb !== ta) return tb - ta
 
-    const ta = new Date(a.openTime || 0).getTime()
-    const tb = new Date(b.openTime || 0).getTime()
+    const eb = parseExpectOrder(b.expect)
+    const ea = parseExpectOrder(a.expect)
 
-    return tb - ta
+    return eb - ea
   })
 }
 
-async function fetchJson(url) {
+async function fetchText(url) {
   const res = await fetch(url, {
     cache: 'no-store',
     headers: {
-      accept: 'application/json',
-      'user-agent': 'Mozilla/5.0',
+      accept: 'text/html,application/json',
+      'user-agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
     },
   })
 
@@ -41,6 +70,12 @@ async function fetchJson(url) {
     throw new Error(`接口请求失败：${url}`)
   }
 
+  return text
+}
+
+async function fetchJson(url) {
+  const text = await fetchText(url)
+
   if (text.trim().startsWith('<')) {
     throw new Error(`接口返回网页，不是开奖JSON：${url}`)
   }
@@ -48,18 +83,34 @@ async function fetchJson(url) {
   return JSON.parse(text)
 }
 
-function normalizeItem(item) {
+function normalizeMacauItem(item) {
   const numbers = parseOpenCode(item.openCode)
 
-  if (numbers.length < 6) return null
+  if (numbers.length < 7) return null
 
   return {
     expect: String(item.expect || ''),
     openTime: item.openTime || '',
-    openCode: item.openCode || '',
+    openCode: numbers.join(','),
     numbers,
     wave: item.wave || '',
     zodiac: item.zodiac || '',
+  }
+}
+
+function normalizeHongKongItem(item) {
+  const numbers = parseOpenCode(item.numbers || item.openCode)
+
+  if (!item.expect) return null
+  if (numbers.length < 7) return null
+
+  return {
+    expect: String(item.expect || ''),
+    openTime: item.openTime || '',
+    openCode: numbers.join(','),
+    numbers: numbers.slice(0, 7),
+    wave: '',
+    zodiac: '',
   }
 }
 
@@ -126,82 +177,259 @@ function buildAnalysis(historySource, recentCount = 100) {
   }
 }
 
-export async function GET() {
-  try {
-    const now = new Date()
-    const currentYear = now.getFullYear()
-    const previousYear = currentYear - 1
+function stripHtml(html) {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&#x2F;/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
-    const historyUrls = [
-      `https://history.macaumarksix.com/history/macaujc2/y/${currentYear}`,
-      `https://history.macaumarksix.com/history/macaujc2/y/${previousYear}`,
-    ]
+function parseHongKongStaticHtml(html) {
+  const text = stripHtml(html)
+  const rows = []
 
-    let allHistory = []
+  // 格式示例：26/052 16/05/2026 11 25 28 36 41 43 22
+  const regex =
+    /(\d{2}\/\d{3})\s+(\d{2}\/\d{2}\/\d{4})([\s\S]*?)(?=\d{2}\/\d{3}\s+\d{2}\/\d{2}\/\d{4}|$)/g
 
-    for (const url of historyUrls) {
-      try {
-        const json = await fetchJson(url)
+  let match
 
-        if (Array.isArray(json?.data)) {
-          allHistory = allHistory.concat(json.data)
-        }
-      } catch (error) {
-        console.log(error.message)
+  while ((match = regex.exec(text)) !== null) {
+    const expect = match[1]
+    const openTime = match[2]
+    const block = match[3] || ''
+
+    const numbers = []
+    const numberMatches = block.match(/\b([1-9]|[1-4]\d)\b/g) || []
+
+    for (const n of numberMatches) {
+      const num = Number(n)
+      if (num >= 1 && num <= 49) {
+        numbers.push(num)
       }
+
+      if (numbers.length >= 7) break
     }
 
-    const uniqueMap = new Map()
+    if (numbers.length >= 7) {
+      rows.push({
+        expect,
+        openTime,
+        numbers: numbers.slice(0, 7),
+      })
+    }
+  }
 
-    allHistory.forEach((item) => {
-      const normalized = normalizeItem(item)
+  return rows
+}
+
+async function fetchHongKongFromOfficialByPlaywright() {
+  try {
+    const { chromium } = await import('playwright')
+
+    const browser = await chromium.launch({
+      headless: true,
+    })
+
+    const page = await browser.newPage({
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
+    })
+
+    await page.goto('https://bet.hkjc.com/ch/marksix/results', {
+      waitUntil: 'networkidle',
+      timeout: 30000,
+    })
+
+    await page.waitForTimeout(3000)
+
+    const bodyText = await page.locator('body').innerText({
+      timeout: 10000,
+    })
+
+    await browser.close()
+
+    return parseHongKongStaticHtml(bodyText)
+  } catch (error) {
+    console.log('香港官方页面 Playwright 抓取失败：', error.message)
+    return []
+  }
+}
+
+async function fetchHongKongFromStaticSource() {
+  const now = new Date()
+  const currentYear = now.getFullYear()
+  const previousYear = currentYear - 1
+
+  const urls = [
+    'https://lottery.hk/en/mark-six/results/',
+    `https://lottery.hk/en/mark-six/results/${currentYear}`,
+    `https://lottery.hk/en/mark-six/results/${previousYear}`,
+  ]
+
+  let allRows = []
+
+  for (const url of urls) {
+    try {
+      const html = await fetchText(url)
+      const rows = parseHongKongStaticHtml(html)
+      allRows = allRows.concat(rows)
+    } catch (error) {
+      console.log('香港备用源抓取失败：', error.message)
+    }
+  }
+
+  return allRows
+}
+
+async function getMacauData() {
+  const now = new Date()
+  const currentYear = now.getFullYear()
+  const previousYear = currentYear - 1
+
+  const historyUrls = [
+    `https://history.macaumarksix.com/history/macaujc2/y/${currentYear}`,
+    `https://history.macaumarksix.com/history/macaujc2/y/${previousYear}`,
+  ]
+
+  let allHistory = []
+
+  for (const url of historyUrls) {
+    try {
+      const json = await fetchJson(url)
+
+      if (Array.isArray(json?.data)) {
+        allHistory = allHistory.concat(json.data)
+      }
+    } catch (error) {
+      console.log(error.message)
+    }
+  }
+
+  const uniqueMap = new Map()
+
+  allHistory.forEach((item) => {
+    const normalized = normalizeMacauItem(item)
+
+    if (!normalized?.expect) return
+
+    uniqueMap.set(normalized.expect, normalized)
+  })
+
+  let latest = null
+
+  try {
+    const latestJson = await fetchJson('https://macaumarksix.com/api/macaujc2.com')
+
+    if (Array.isArray(latestJson) && latestJson[0]?.openCode) {
+      const normalizedLatest = normalizeMacauItem(latestJson[0])
+
+      if (normalizedLatest?.expect) {
+        latest = normalizedLatest
+        uniqueMap.set(normalizedLatest.expect, normalizedLatest)
+      }
+    }
+  } catch (error) {
+    console.log(error.message)
+  }
+
+  const history = sortHistory(Array.from(uniqueMap.values()))
+
+  if (!history.length) {
+    throw new Error('没有获取到澳门历史开奖数据，请稍后刷新重试')
+  }
+
+  latest = latest || history[0]
+
+  const currentAnalysis = buildAnalysis(history, 100)
+
+  const latestNumber = Number(latest.expect)
+  const nextExpect = Number.isFinite(latestNumber)
+    ? String(latestNumber + 1)
+    : ''
+
+  return {
+    ok: true,
+    play: 'macau',
+    source: 'macaujc.com',
+    latest,
+    nextExpect,
+    history: history.slice(0, 400),
+    recentHistory: history.slice(0, 30),
+    updatedAt: new Date().toISOString(),
+    ...currentAnalysis,
+  }
+}
+
+async function getHongKongData() {
+  const uniqueMap = new Map()
+
+  // 第一优先：尝试官方 HKJC 页面。如果你本地没有安装 Playwright，会自动跳过。
+  const officialRows = await fetchHongKongFromOfficialByPlaywright()
+
+  officialRows.forEach((item) => {
+    const normalized = normalizeHongKongItem(item)
+
+    if (!normalized?.expect) return
+
+    uniqueMap.set(normalized.expect, normalized)
+  })
+
+  // 第二优先：备用静态页面，保证前端能稳定拿到香港历史开奖。
+  if (uniqueMap.size < 80) {
+    const staticRows = await fetchHongKongFromStaticSource()
+
+    staticRows.forEach((item) => {
+      const normalized = normalizeHongKongItem(item)
 
       if (!normalized?.expect) return
 
       uniqueMap.set(normalized.expect, normalized)
     })
+  }
 
-    let latest = null
+  const history = sortHistory(Array.from(uniqueMap.values()))
 
-    try {
-      const latestJson = await fetchJson('https://macaumarksix.com/api/macaujc2.com')
+  if (!history.length) {
+    throw new Error('没有获取到香港历史开奖数据，请稍后刷新重试')
+  }
 
-      if (Array.isArray(latestJson) && latestJson[0]?.openCode) {
-        const normalizedLatest = normalizeItem(latestJson[0])
+  const latest = history[0]
+  const currentAnalysis = buildAnalysis(history, 100)
 
-        if (normalizedLatest?.expect) {
-          latest = normalizedLatest
-          uniqueMap.set(normalizedLatest.expect, normalizedLatest)
-        }
-      }
-    } catch (error) {
-      console.log(error.message)
+  // 香港不是每天开奖，下一期期号不强行 +1；如果后面你要精准下期开奖期号，可以再单独抓 HKJC 下期开奖区。
+  const nextExpect = '等待下期开奖'
+
+  return {
+    ok: true,
+    play: 'hongkong',
+    source: 'hkjc / lottery.hk',
+    latest,
+    nextExpect,
+    history: history.slice(0, 400),
+    recentHistory: history.slice(0, 30),
+    updatedAt: new Date().toISOString(),
+    ...currentAnalysis,
+  }
+}
+
+export async function GET(request) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const play = searchParams.get('play') || 'macau'
+
+    if (play === 'hongkong') {
+      const data = await getHongKongData()
+      return NextResponse.json(data)
     }
 
-    const history = sortHistory(Array.from(uniqueMap.values()))
-
-    if (!history.length) {
-      throw new Error('没有获取到历史开奖数据，请稍后刷新重试')
-    }
-
-    latest = latest || history[0]
-
-    const currentAnalysis = buildAnalysis(history, 100)
-
-    const nextExpect = latest?.expect
-      ? String(Number(latest.expect) + 1)
-      : ''
-
-    return NextResponse.json({
-      ok: true,
-      source: 'macaujc.com',
-      latest,
-      nextExpect,
-      history: history.slice(0, 400),
-      recentHistory: history.slice(0, 30),
-      updatedAt: new Date().toISOString(),
-      ...currentAnalysis,
-    })
+    const data = await getMacauData()
+    return NextResponse.json(data)
   } catch (error) {
     return NextResponse.json(
       {
