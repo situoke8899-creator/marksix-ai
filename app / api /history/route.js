@@ -30,16 +30,37 @@ async function fetchJson(url) {
   const res = await fetch(url, {
     cache: 'no-store',
     headers: {
-      accept: 'application/json,text/plain,*/*',
+      accept: 'application/json',
       'user-agent': 'Mozilla/5.0',
     },
   })
 
+  const text = await res.text()
+
   if (!res.ok) {
-    throw new Error(`Fetch failed: ${url}`)
+    throw new Error(`接口请求失败：${url}`)
   }
 
-  return res.json()
+  if (text.trim().startsWith('<')) {
+    throw new Error(`接口返回了网页，不是开奖数据：${url}`)
+  }
+
+  return JSON.parse(text)
+}
+
+function normalizeItem(item) {
+  const numbers = parseOpenCode(item.openCode)
+
+  if (numbers.length < 6) return null
+
+  return {
+    expect: String(item.expect || ''),
+    openTime: item.openTime || '',
+    openCode: item.openCode || '',
+    numbers,
+    wave: item.wave || '',
+    zodiac: item.zodiac || '',
+  }
 }
 
 export async function GET() {
@@ -53,70 +74,58 @@ export async function GET() {
       `https://history.macaumarksix.com/history/macaujc2/y/${previousYear}`,
     ]
 
-    const historyResults = await Promise.allSettled(
-      historyUrls.map((url) => fetchJson(url))
-    )
-
     let allHistory = []
 
-    historyResults.forEach((result) => {
-      if (result.status === 'fulfilled') {
-        const data = result.value?.data
+    for (const url of historyUrls) {
+      try {
+        const json = await fetchJson(url)
 
-        if (Array.isArray(data)) {
-          allHistory = allHistory.concat(data)
+        if (Array.isArray(json?.data)) {
+          allHistory = allHistory.concat(json.data)
         }
+      } catch (error) {
+        console.log(error.message)
       }
-    })
+    }
 
     const uniqueMap = new Map()
 
     allHistory.forEach((item) => {
-      if (!item?.expect || !item?.openCode) return
+      const normalized = normalizeItem(item)
 
-      const numbers = parseOpenCode(item.openCode)
+      if (!normalized?.expect) return
 
-      if (numbers.length < 6) return
-
-      uniqueMap.set(String(item.expect), {
-        expect: String(item.expect),
-        openTime: item.openTime || '',
-        openCode: item.openCode,
-        numbers,
-        wave: item.wave || '',
-        zodiac: item.zodiac || '',
-      })
+      uniqueMap.set(normalized.expect, normalized)
     })
 
     let history = sortHistory(Array.from(uniqueMap.values()))
-
     let latest = history[0] || null
 
     try {
-      const latestData = await fetchJson('https://macaumarksix.com/api/macaujc2.com')
+      const latestJson = await fetchJson('https://macaumarksix.com/api/macaujc2.com')
 
-      if (Array.isArray(latestData) && latestData[0]?.openCode) {
-        const latestItem = latestData[0]
-        const latestNumbers = parseOpenCode(latestItem.openCode)
+      if (Array.isArray(latestJson) && latestJson[0]?.openCode) {
+        const normalizedLatest = normalizeItem(latestJson[0])
 
-        latest = {
-          expect: String(latestItem.expect),
-          openTime: latestItem.openTime || '',
-          openCode: latestItem.openCode,
-          numbers: latestNumbers,
-          wave: latestItem.wave || '',
-          zodiac: latestItem.zodiac || '',
-        }
+        if (normalizedLatest?.expect) {
+          latest = normalizedLatest
 
-        if (!uniqueMap.has(String(latest.expect))) {
-          history.unshift(latest)
+          if (!uniqueMap.has(normalizedLatest.expect)) {
+            uniqueMap.set(normalizedLatest.expect, normalizedLatest)
+          }
         }
       }
     } catch (error) {
-      console.log('Latest fetch failed, using history latest only.')
+      console.log(error.message)
     }
 
-    history = sortHistory(history)
+    history = sortHistory(Array.from(uniqueMap.values()))
+
+    if (!history.length) {
+      throw new Error('没有获取到历史开奖数据，请稍后刷新重试')
+    }
+
+    latest = latest || history[0]
 
     const recentCount = 100
     const recentHistory = history.slice(0, recentCount)
@@ -193,8 +202,7 @@ export async function GET() {
     return NextResponse.json(
       {
         ok: false,
-        message: '获取开奖数据失败，请稍后重试',
-        error: error.message,
+        message: error.message || '获取开奖数据失败，请稍后重试',
       },
       {
         status: 500,
