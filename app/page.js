@@ -37,18 +37,8 @@ function Ball({ num, count, type, small = false, hit = false }) {
   )
 }
 
-function buildBacktest(history, targetExpect) {
-  if (!history?.length || !targetExpect) return null
-
-  const targetIndex = history.findIndex(
-    (item) => String(item.expect) === String(targetExpect)
-  )
-
-  if (targetIndex === -1) return null
-
-  const target = history[targetIndex]
-
-  const beforeHistory = history.slice(targetIndex + 1, targetIndex + 101)
+function buildRecommendFromBefore(beforeHistory, sampleSize) {
+  const source = beforeHistory.slice(0, sampleSize)
 
   const counts = {}
 
@@ -56,7 +46,7 @@ function buildBacktest(history, targetExpect) {
     counts[i] = 0
   }
 
-  beforeHistory.forEach((item) => {
+  source.forEach((item) => {
     item.numbers.forEach((num) => {
       counts[num] = (counts[num] || 0) + 1
     })
@@ -101,24 +91,88 @@ function buildBacktest(history, targetExpect) {
     (a, b) => a.num - b.num
   )
 
-  const recommendSet = new Set(recommendNumbers.map((item) => item.num))
-
-  const hitNumbers = target.numbers.filter((num) => recommendSet.has(num))
-  const missNumbers = target.numbers.filter((num) => !recommendSet.has(num))
-
-  const hitRate = target.numbers.length
-    ? ((hitNumbers.length / target.numbers.length) * 100).toFixed(2)
-    : '0.00'
-
   return {
-    target,
-    beforeHistory,
+    sampleSize: source.length,
     hotNumbers,
     coldNumbers,
     recommendNumbers,
-    hitNumbers,
-    missNumbers,
+  }
+}
+
+function buildSingleBacktest(history, targetExpect, sampleSize) {
+  if (!history?.length || !targetExpect) return null
+
+  const targetIndex = history.findIndex(
+    (item) => String(item.expect) === String(targetExpect)
+  )
+
+  if (targetIndex === -1) return null
+
+  const target = history[targetIndex]
+  const beforeHistory = history.slice(targetIndex + 1)
+
+  const analysis = buildRecommendFromBefore(beforeHistory, sampleSize)
+
+  const specialNumber = target.numbers[target.numbers.length - 1]
+  const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
+  const specialHit = recommendSet.has(specialNumber)
+
+  return {
+    target,
+    specialNumber,
+    specialHit,
+    ...analysis,
+  }
+}
+
+function buildSpecialBacktestRange(history, rangeSize, sampleSize) {
+  if (!history?.length) {
+    return {
+      rangeSize,
+      sampleSize,
+      testedCount: 0,
+      hitCount: 0,
+      hitRate: '0.00',
+      rows: [],
+    }
+  }
+
+  const rows = []
+
+  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
+    const target = history[index]
+    const beforeHistory = history.slice(index + 1)
+
+    if (beforeHistory.length < sampleSize) continue
+
+    const analysis = buildRecommendFromBefore(beforeHistory, sampleSize)
+    const specialNumber = target.numbers[target.numbers.length - 1]
+    const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
+    const specialHit = recommendSet.has(specialNumber)
+
+    rows.push({
+      expect: target.expect,
+      openTime: target.openTime,
+      numbers: target.numbers,
+      specialNumber,
+      specialHit,
+      recommendNumbers: analysis.recommendNumbers,
+      hotNumbers: analysis.hotNumbers,
+      coldNumbers: analysis.coldNumbers,
+    })
+  }
+
+  const hitCount = rows.filter((item) => item.specialHit).length
+  const testedCount = rows.length
+  const hitRate = testedCount ? ((hitCount / testedCount) * 100).toFixed(2) : '0.00'
+
+  return {
+    rangeSize,
+    sampleSize,
+    testedCount,
+    hitCount,
     hitRate,
+    rows,
   }
 }
 
@@ -126,8 +180,9 @@ export default function Page() {
   const [data, setData] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
-  const [filter, setFilter] = React.useState('all')
   const [selectedExpect, setSelectedExpect] = React.useState('')
+  const [sampleSize, setSampleSize] = React.useState(100)
+  const [filter, setFilter] = React.useState('all')
 
   const loadData = async () => {
     try {
@@ -161,11 +216,19 @@ export default function Page() {
   }, [])
 
   const history = data?.history || []
-  const backtest = buildBacktest(history, selectedExpect)
 
-  const recommendNumbers = backtest?.recommendNumbers || []
-  const hotNumbers = backtest?.hotNumbers || []
-  const coldNumbers = backtest?.coldNumbers || []
+  const singleBacktest = buildSingleBacktest(
+    history,
+    selectedExpect,
+    sampleSize
+  )
+
+  const last100SpecialBacktest = buildSpecialBacktestRange(history, 100, 100)
+  const last50SpecialBacktest = buildSpecialBacktestRange(history, 50, 50)
+
+  const recommendNumbers = singleBacktest?.recommendNumbers || []
+  const hotNumbers = singleBacktest?.hotNumbers || []
+  const coldNumbers = singleBacktest?.coldNumbers || []
 
   const filteredRecommend = recommendNumbers.filter((item) => {
     if (filter === 'hot') return item.type === 'hot'
@@ -186,10 +249,10 @@ export default function Page() {
     <main className="page">
       <section className="hero">
         <div>
-          <div className="badge">澳门六合彩历史数据回测</div>
+          <div className="badge">澳门六合彩特码历史回测</div>
           <h1>36码智能筛选系统</h1>
           <p>
-            选择任意历史期号，系统只用该期之前的100期数据生成36码，再对比该期开奖结果。
+            系统只判断每期开奖最后面的特码，例如 24 23 21 41 38 33 + 01，只判断 01 是否落入36码。
           </p>
         </div>
 
@@ -212,12 +275,81 @@ export default function Page() {
 
       {data && (
         <>
+          <section className="top-grid">
+            <div className="card">
+              <div className="card-title">特码命中率统计</div>
+              <p className="section-desc">
+                只统计每期最后一个特码是否在当时筛选出的36个号码里面。
+              </p>
+
+              <div className="latest-info">
+                <div>
+                  <span>近100期特码命中</span>
+                  <strong>{last100SpecialBacktest.hitCount} / {last100SpecialBacktest.testedCount}</strong>
+                </div>
+
+                <div>
+                  <span>近100期命中率</span>
+                  <strong>{last100SpecialBacktest.hitRate}%</strong>
+                </div>
+
+                <div>
+                  <span>规则</span>
+                  <strong>前100期算36码</strong>
+                </div>
+              </div>
+
+              <div className="latest-info">
+                <div>
+                  <span>近50期特码命中</span>
+                  <strong>{last50SpecialBacktest.hitCount} / {last50SpecialBacktest.testedCount}</strong>
+                </div>
+
+                <div>
+                  <span>近50期命中率</span>
+                  <strong>{last50SpecialBacktest.hitRate}%</strong>
+                </div>
+
+                <div>
+                  <span>规则</span>
+                  <strong>前50期算36码</strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">当前选择规则</div>
+
+              <div className="stats-list">
+                <div>
+                  <span>单期回测样本</span>
+                  <strong>{sampleSize}期</strong>
+                </div>
+
+                <div>
+                  <span>热门号码</span>
+                  <strong>24个</strong>
+                </div>
+
+                <div>
+                  <span>冷门号码</span>
+                  <strong>12个</strong>
+                </div>
+
+                <div>
+                  <span>最终筛选</span>
+                  <strong>36个</strong>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section className="card">
             <div className="section-head">
               <div>
                 <div className="card-title">选择回测期号</div>
                 <p className="section-desc">
-                  例如选择第2026132期，系统会用2026132期之前的100期数据计算36码，然后对比2026132期真实开奖号码。
+                  选择历史期号后，系统会用该期之前的历史数据生成36码，然后只判断该期最后的特码是否命中。
                 </p>
               </div>
             </div>
@@ -247,61 +379,85 @@ export default function Page() {
               </div>
 
               <div>
-                <span>回测样本</span>
-                <strong>{backtest?.beforeHistory?.length || 0}期</strong>
+                <span>计算样本</span>
+                <select
+                  value={sampleSize}
+                  onChange={(e) => setSampleSize(Number(e.target.value))}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '12px',
+                    background: '#111827',
+                    color: '#fff',
+                    border: '1px solid #3f3f46',
+                    fontWeight: '700',
+                  }}
+                >
+                  <option value={100}>前100期生成36码</option>
+                  <option value={50}>前50期生成36码</option>
+                </select>
               </div>
 
               <div>
-                <span>命中率</span>
-                <strong>{backtest ? `${backtest.hitRate}%` : '-'}</strong>
+                <span>该期特码结果</span>
+                <strong>
+                  {singleBacktest
+                    ? singleBacktest.specialHit
+                      ? '命中'
+                      : '未命中'
+                    : '-'}
+                </strong>
               </div>
             </div>
           </section>
 
-          {backtest && (
+          {singleBacktest && (
             <>
               <section className="top-grid">
                 <div className="card latest-card">
                   <div className="card-title">
-                    第 {backtest.target.expect} 期真实开奖
+                    第 {singleBacktest.target.expect} 期真实开奖
                   </div>
 
                   <div className="latest-info">
                     <div>
                       <span>开奖期号</span>
-                      <strong>第 {backtest.target.expect} 期</strong>
+                      <strong>第 {singleBacktest.target.expect} 期</strong>
                     </div>
 
                     <div>
                       <span>开奖时间</span>
-                      <strong>{backtest.target.openTime || '-'}</strong>
+                      <strong>{singleBacktest.target.openTime || '-'}</strong>
                     </div>
 
                     <div>
-                      <span>命中结果</span>
-                      <strong>{backtest.hitNumbers.length} / 7</strong>
+                      <span>特码</span>
+                      <strong>
+                        {String(singleBacktest.specialNumber).padStart(2, '0')}
+                        {singleBacktest.specialHit ? ' 命中' : ' 未命中'}
+                      </strong>
                     </div>
                   </div>
 
                   <div className="latest-balls">
-                    {backtest.target.numbers.map((num, index) => (
+                    {singleBacktest.target.numbers.map((num, index) => (
                       <React.Fragment key={`${num}-${index}`}>
                         {index === 6 && <div className="plus">+</div>}
                         <Ball
                           num={num}
-                          hit={backtest.hitNumbers.includes(num)}
+                          hit={index === 6 && singleBacktest.specialHit}
                         />
                       </React.Fragment>
                     ))}
                   </div>
 
                   <div style={{ marginTop: '20px', color: '#a1a1aa' }}>
-                    黄色边框 = 命中的开奖号码
+                    黄色边框 = 特码命中36码。这里只判断最后一个特码，不判断前面6个平码。
                   </div>
                 </div>
 
                 <div className="card stats-card">
-                  <div className="card-title">回测结果</div>
+                  <div className="card-title">该期回测结果</div>
 
                   <div className="stats-list">
                     <div>
@@ -320,38 +476,10 @@ export default function Page() {
                     </div>
 
                     <div>
-                      <span>命中率</span>
-                      <strong>{backtest.hitRate}%</strong>
+                      <span>特码结果</span>
+                      <strong>{singleBacktest.specialHit ? '命中' : '未命中'}</strong>
                     </div>
                   </div>
-                </div>
-              </section>
-
-              <section className="card">
-                <div className="card-title">命中号码</div>
-
-                <div className="latest-balls">
-                  {backtest.hitNumbers.length > 0 ? (
-                    backtest.hitNumbers.map((num) => (
-                      <Ball key={num} num={num} hit />
-                    ))
-                  ) : (
-                    <p className="section-desc">没有命中号码</p>
-                  )}
-                </div>
-              </section>
-
-              <section className="card">
-                <div className="card-title">未命中号码</div>
-
-                <div className="latest-balls">
-                  {backtest.missNumbers.length > 0 ? (
-                    backtest.missNumbers.map((num) => (
-                      <Ball key={num} num={num} />
-                    ))
-                  ) : (
-                    <p className="section-desc">全部命中</p>
-                  )}
                 </div>
               </section>
 
@@ -360,7 +488,7 @@ export default function Page() {
                   <div>
                     <div className="card-title">该期回测推荐36码</div>
                     <p className="section-desc">
-                      只使用第 {backtest.target.expect} 期之前的100期数据计算。
+                      用第 {singleBacktest.target.expect} 期之前的 {sampleSize} 期数据计算。黄色边框代表该期特码。
                     </p>
                   </div>
 
@@ -391,7 +519,7 @@ export default function Page() {
                       num={item.num}
                       count={item.count}
                       type={item.type}
-                      hit={backtest.target.numbers.includes(item.num)}
+                      hit={item.num === singleBacktest.specialNumber}
                     />
                   ))}
                 </div>
@@ -400,7 +528,7 @@ export default function Page() {
               <section className="three-grid">
                 <div className="card">
                   <div className="card-title hot-title">热门号码 24个</div>
-                  <p className="section-desc">该期之前100期中出现次数最多的24个号码。</p>
+                  <p className="section-desc">该期之前{sampleSize}期中出现次数最多的24个号码。</p>
 
                   <div className="ball-grid">
                     {hotNumbers.map((item) => (
@@ -410,7 +538,7 @@ export default function Page() {
                         count={item.count}
                         type="hot"
                         small
-                        hit={backtest.target.numbers.includes(item.num)}
+                        hit={item.num === singleBacktest.specialNumber}
                       />
                     ))}
                   </div>
@@ -418,7 +546,7 @@ export default function Page() {
 
                 <div className="card">
                   <div className="card-title cold-title">冷门号码 12个</div>
-                  <p className="section-desc">该期之前100期中出现次数最少的12个号码。</p>
+                  <p className="section-desc">该期之前{sampleSize}期中出现次数最少的12个号码。</p>
 
                   <div className="ball-grid">
                     {coldNumbers.map((item) => (
@@ -428,7 +556,7 @@ export default function Page() {
                         count={item.count}
                         type="cold"
                         small
-                        hit={backtest.target.numbers.includes(item.num)}
+                        hit={item.num === singleBacktest.specialNumber}
                       />
                     ))}
                   </div>
@@ -466,8 +594,76 @@ export default function Page() {
                 </div>
               </section>
 
+              <section className="card">
+                <div className="card-title">近100期特码回测明细</div>
+                <p className="section-desc">
+                  每一期都用它之前的100期数据生成36码，然后判断该期特码是否命中。
+                </p>
+
+                <div className="history-list">
+                  {last100SpecialBacktest.rows.slice(0, 20).map((item) => (
+                    <div key={item.expect} className="history-row">
+                      <div className="history-meta">
+                        <strong>第 {item.expect} 期</strong>
+                        <span>{item.openTime}</span>
+                        <span style={{ display: 'block', marginTop: '6px', color: item.specialHit ? '#facc15' : '#a1a1aa' }}>
+                          特码 {String(item.specialNumber).padStart(2, '0')}：{item.specialHit ? '命中' : '未命中'}
+                        </span>
+                      </div>
+
+                      <div className="history-balls">
+                        {item.numbers.map((num, index) => (
+                          <React.Fragment key={`${item.expect}-${num}-${index}`}>
+                            {index === 6 && <span className="history-plus">+</span>}
+                            <Ball
+                              num={num}
+                              small
+                              hit={index === 6 && item.specialHit}
+                            />
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="card">
+                <div className="card-title">近50期特码回测明细</div>
+                <p className="section-desc">
+                  每一期都用它之前的50期数据生成36码，然后判断该期特码是否命中。
+                </p>
+
+                <div className="history-list">
+                  {last50SpecialBacktest.rows.slice(0, 20).map((item) => (
+                    <div key={item.expect} className="history-row">
+                      <div className="history-meta">
+                        <strong>第 {item.expect} 期</strong>
+                        <span>{item.openTime}</span>
+                        <span style={{ display: 'block', marginTop: '6px', color: item.specialHit ? '#facc15' : '#a1a1aa' }}>
+                          特码 {String(item.specialNumber).padStart(2, '0')}：{item.specialHit ? '命中' : '未命中'}
+                        </span>
+                      </div>
+
+                      <div className="history-balls">
+                        {item.numbers.map((num, index) => (
+                          <React.Fragment key={`${item.expect}-${num}-${index}`}>
+                            {index === 6 && <span className="history-plus">+</span>}
+                            <Ball
+                              num={num}
+                              small
+                              hit={index === 6 && item.specialHit}
+                            />
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
               <div className="footer-note">
-                回测逻辑：选择某一期后，只使用该期之前的100期数据计算36码，避免用开奖后的数据反推。
+                回测逻辑：只判断特码是否落入36码，不判断平码。历史回测不能保证下一期开奖结果。
               </div>
             </>
           )}
