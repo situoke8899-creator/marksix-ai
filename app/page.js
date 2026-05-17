@@ -40,6 +40,7 @@ function Ball({ num, count, type, small = false, hit = false }) {
 function makeStrategies() {
   const samples = [30, 50, 80, 100, 150]
   const hotCounts = [18, 20, 22, 24, 26, 28, 30]
+
   const modes = [
     {
       key: 'all',
@@ -271,6 +272,52 @@ function buildSingleBacktest(history, targetExpect, strategy) {
   }
 }
 
+function copyToClipboard(text) {
+  if (!text) {
+    alert('没有可复制的号码')
+    return
+  }
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text)
+    alert('已复制：' + text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
+  alert('已复制：' + text)
+}
+
+function formatNumbers(list) {
+  return list
+    .map((item) => String(item.num).padStart(2, '0'))
+    .join(' ')
+}
+
+function CopyButton({ label, text }) {
+  return (
+    <button
+      className="refresh-btn"
+      style={{
+        padding: '10px 16px',
+        borderRadius: '14px',
+        fontSize: '14px',
+      }}
+      onClick={() => copyToClipboard(text)}
+    >
+      {label}
+    </button>
+  )
+}
+
 export default function Page() {
   const [data, setData] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
@@ -337,6 +384,18 @@ export default function Page() {
   const hotNumbers = singleBacktest?.hotNumbers || []
   const coldNumbers = singleBacktest?.coldNumbers || []
 
+  const recommendText = formatNumbers(recommendNumbers)
+  const hotText = formatNumbers(hotNumbers)
+  const coldText = formatNumbers(coldNumbers)
+
+  const fullCopyText = [
+    `期号：${singleBacktest?.target?.expect || ''}`,
+    `策略：${currentStrategy?.label || ''}`,
+    `36码：${recommendText}`,
+    `热门号：${hotText}`,
+    `冷门号：${coldText}`,
+  ].join('\n')
+
   const filteredRecommend = recommendNumbers.filter((item) => {
     if (filter === 'hot') return item.type === 'hot'
     if (filter === 'cold') return item.type === 'cold'
@@ -353,7 +412,7 @@ export default function Page() {
           <div className="badge">澳门六合彩特码多策略回测</div>
           <h1>36码智能筛选系统</h1>
           <p>
-            自动测试多种36码筛选规则，寻找近100期和近50期特码命中率更高的策略。
+            自动测试多种36码筛选规则，寻找近100期和近50期里面特码命中率更高的策略。
           </p>
         </div>
 
@@ -380,7 +439,7 @@ export default function Page() {
             <div className="card">
               <div className="card-title">当前最佳策略</div>
               <p className="section-desc">
-                系统自动测试多种组合，默认选择综合表现最好的策略。注意：历史回测高，不代表下一期一定命中。
+                系统自动测试多种组合，默认选择综合表现最好的策略。历史回测高，不代表下一期一定命中。
               </p>
 
               <div className="latest-info">
@@ -629,6 +688,13 @@ export default function Page() {
                     <p className="section-desc">
                       该36码由当前策略生成。黄色边框代表该期最后的特码。
                     </p>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '14px' }}>
+                      <CopyButton label="复制36码" text={recommendText} />
+                      <CopyButton label="复制热门号" text={hotText} />
+                      <CopyButton label="复制冷门号" text={coldText} />
+                      <CopyButton label="复制完整结果" text={fullCopyText} />
+                    </div>
                   </div>
 
                   <div className="filter-row">
@@ -669,6 +735,10 @@ export default function Page() {
                   <div className="card-title hot-title">热门号码</div>
                   <p className="section-desc">当前策略筛选出的高分号码。</p>
 
+                  <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+                    <CopyButton label="复制热门号" text={hotText} />
+                  </div>
+
                   <div className="ball-grid">
                     {hotNumbers.map((item) => (
                       <Ball
@@ -686,6 +756,10 @@ export default function Page() {
                 <div className="card">
                   <div className="card-title cold-title">冷门号码</div>
                   <p className="section-desc">当前策略筛选出的低分号码。</p>
+
+                  <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+                    <CopyButton label="复制冷门号" text={coldText} />
+                  </div>
 
                   <div className="ball-grid">
                     {coldNumbers.map((item) => (
