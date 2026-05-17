@@ -39,10 +39,10 @@ function Ball({ num, count, type, small = false, hit = false, hitType = 'special
   const wave = getWave(Number(num))
 
   const outlineColor = hit
-    ? hitType === 'normal'
-      ? '#22c55e'
-      : '#facc15'
-    : undefined
+  ? hitType === 'normal'
+    ? '#ef4444'
+    : '#facc15'
+  : undefined
 
   return (
     <div className={`ball-box ${small ? 'small' : ''}`}>
