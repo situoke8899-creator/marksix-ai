@@ -12,6 +12,29 @@ function getWave(num) {
   return 'green'
 }
 
+function formatMoney(value) {
+  const num = Number(value || 0)
+  return `¥${num.toFixed(2)}`
+}
+
+function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 47) {
+  const betPerNumber = totalBetPerIssue / 36
+  const returnPerHit = betPerNumber * odds
+  const totalCost = testedCount * totalBetPerIssue
+  const totalReturn = hitCount * returnPerHit
+  const profit = totalReturn - totalCost
+  const roi = totalCost ? ((profit / totalCost) * 100).toFixed(2) : '0.00'
+
+  return {
+    betPerNumber,
+    returnPerHit,
+    totalCost,
+    totalReturn,
+    profit,
+    roi,
+  }
+}
+
 function Ball({ num, count, type, small = false, hit = false }) {
   const wave = getWave(Number(num))
 
@@ -325,6 +348,8 @@ export default function Page() {
   const [selectedExpect, setSelectedExpect] = React.useState('')
   const [selectedStrategyId, setSelectedStrategyId] = React.useState('auto')
   const [filter, setFilter] = React.useState('all')
+  const [totalBetPerIssue, setTotalBetPerIssue] = React.useState(3600)
+  const [odds, setOdds] = React.useState(47)
 
   const loadData = async () => {
     try {
@@ -396,6 +421,24 @@ export default function Page() {
     `冷门号：${coldText}`,
   ].join('\n')
 
+  const currentFinance100 = currentStrategy
+    ? calculateProfit(
+        currentStrategy.result100.hitCount,
+        currentStrategy.result100.testedCount,
+        totalBetPerIssue,
+        odds
+      )
+    : null
+
+  const currentFinance50 = currentStrategy
+    ? calculateProfit(
+        currentStrategy.result50.hitCount,
+        currentStrategy.result50.testedCount,
+        totalBetPerIssue,
+        odds
+      )
+    : null
+
   const filteredRecommend = recommendNumbers.filter((item) => {
     if (filter === 'hot') return item.type === 'hot'
     if (filter === 'cold') return item.type === 'cold'
@@ -412,7 +455,7 @@ export default function Page() {
           <div className="badge">澳门六合彩特码多策略回测</div>
           <h1>36码智能筛选系统</h1>
           <p>
-            自动测试多种36码筛选规则，寻找近100期和近50期里面特码命中率更高的策略。
+            自动测试多种36码筛选规则，寻找近100期和近50期里面特码命中率更高，同时金额回测更好的策略。
           </p>
         </div>
 
@@ -469,6 +512,27 @@ export default function Page() {
 
               <div className="latest-info">
                 <div>
+                  <span>100期净盈亏</span>
+                  <strong style={{ color: currentFinance100?.profit >= 0 ? '#22c55e' : '#f87171' }}>
+                    {formatMoney(currentFinance100?.profit)}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>50期净盈亏</span>
+                  <strong style={{ color: currentFinance50?.profit >= 0 ? '#22c55e' : '#f87171' }}>
+                    {formatMoney(currentFinance50?.profit)}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>单码投注</span>
+                  <strong>{formatMoney((totalBetPerIssue || 0) / 36)}</strong>
+                </div>
+              </div>
+
+              <div className="latest-info">
+                <div>
                   <span>统计样本</span>
                   <strong>前{currentStrategy.sampleSize}期</strong>
                 </div>
@@ -486,9 +550,46 @@ export default function Page() {
             </div>
 
             <div className="card">
-              <div className="card-title">选择策略</div>
+              <div className="card-title">金额设置 / 选择策略</div>
 
               <div className="stats-list">
+                <div>
+                  <span>每期总投入</span>
+                  <input
+                    type="number"
+                    value={totalBetPerIssue}
+                    onChange={(e) => setTotalBetPerIssue(Number(e.target.value) || 0)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '12px',
+                      background: '#111827',
+                      color: '#fff',
+                      border: '1px solid #3f3f46',
+                      fontWeight: '700',
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <span>赔率</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={odds}
+                    onChange={(e) => setOdds(Number(e.target.value) || 0)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '12px',
+                      background: '#111827',
+                      color: '#fff',
+                      border: '1px solid #3f3f46',
+                      fontWeight: '700',
+                    }}
+                  />
+                </div>
+
                 <div>
                   <span>策略选择</span>
                   <select
@@ -519,6 +620,11 @@ export default function Page() {
                 </div>
 
                 <div>
+                  <span>单次命中回款</span>
+                  <strong>{formatMoney((totalBetPerIssue / 36) * odds)}</strong>
+                </div>
+
+                <div>
                   <span>策略综合分</span>
                   <strong>{currentStrategy.score}%</strong>
                 </div>
@@ -529,38 +635,104 @@ export default function Page() {
           <section className="card">
             <div className="card-title">策略排行榜</div>
             <p className="section-desc">
-              排名按：近100期命中率70%权重 + 近50期命中率30%权重。重点看是否长期高于73.47%。
+              排名按：近100期命中率70%权重 + 近50期命中率30%权重。金额按每期投入 {formatMoney(totalBetPerIssue)}、赔率 {odds} 倍计算。
             </p>
 
             <div className="history-list">
-              {strategyRanking.slice(0, 12).map((item, index) => (
-                <div key={item.id} className="history-row">
-                  <div className="history-meta">
-                    <strong>第 {index + 1} 名</strong>
-                    <span>{item.label}</span>
-                    <span style={{ display: 'block', marginTop: '6px', color: '#facc15' }}>
-                      综合分：{item.score}%
-                    </span>
+              {strategyRanking.slice(0, 12).map((item, index) => {
+                const finance100 = calculateProfit(
+                  item.result100.hitCount,
+                  item.result100.testedCount,
+                  totalBetPerIssue,
+                  odds
+                )
+
+                const finance50 = calculateProfit(
+                  item.result50.hitCount,
+                  item.result50.testedCount,
+                  totalBetPerIssue,
+                  odds
+                )
+
+                return (
+                  <div key={item.id} className="history-row">
+                    <div className="history-meta">
+                      <strong>第 {index + 1} 名</strong>
+                      <span>{item.label}</span>
+                      <span style={{ display: 'block', marginTop: '6px', color: '#facc15' }}>
+                        综合分：{item.score}%
+                      </span>
+                    </div>
+
+                    <div className="latest-info" style={{ marginBottom: 0 }}>
+                      <div>
+                        <span>近100期</span>
+                        <strong>{item.result100.hitCount} / {item.result100.testedCount} = {item.result100.hitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>近50期</span>
+                        <strong>{item.result50.hitCount} / {item.result50.testedCount} = {item.result50.hitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>规则</span>
+                        <strong>{item.modeLabel}</strong>
+                      </div>
+
+                      <div>
+                        <span>100期净盈亏</span>
+                        <strong style={{ color: finance100.profit >= 0 ? '#22c55e' : '#f87171' }}>
+                          {formatMoney(finance100.profit)}
+                        </strong>
+                      </div>
+
+                      <div>
+                        <span>50期净盈亏</span>
+                        <strong style={{ color: finance50.profit >= 0 ? '#22c55e' : '#f87171' }}>
+                          {formatMoney(finance50.profit)}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="latest-info" style={{ marginTop: '14px', marginBottom: 0 }}>
+                      <div>
+                        <span>100期总投入</span>
+                        <strong>{formatMoney(finance100.totalCost)}</strong>
+                      </div>
+
+                      <div>
+                        <span>100期总回款</span>
+                        <strong>{formatMoney(finance100.totalReturn)}</strong>
+                      </div>
+
+                      <div>
+                        <span>100期收益率</span>
+                        <strong style={{ color: finance100.profit >= 0 ? '#22c55e' : '#f87171' }}>
+                          {finance100.roi}%
+                        </strong>
+                      </div>
+
+                      <div>
+                        <span>50期总投入</span>
+                        <strong>{formatMoney(finance50.totalCost)}</strong>
+                      </div>
+
+                      <div>
+                        <span>50期总回款</span>
+                        <strong>{formatMoney(finance50.totalReturn)}</strong>
+                      </div>
+
+                      <div>
+                        <span>50期收益率</span>
+                        <strong style={{ color: finance50.profit >= 0 ? '#22c55e' : '#f87171' }}>
+                          {finance50.roi}%
+                        </strong>
+                      </div>
+                    </div>
                   </div>
-
-                  <div className="latest-info" style={{ marginBottom: 0 }}>
-                    <div>
-                      <span>近100期</span>
-                      <strong>{item.result100.hitCount} / {item.result100.testedCount} = {item.result100.hitRate}%</strong>
-                    </div>
-
-                    <div>
-                      <span>近50期</span>
-                      <strong>{item.result50.hitCount} / {item.result50.testedCount} = {item.result50.hitRate}%</strong>
-                    </div>
-
-                    <div>
-                      <span>规则</span>
-                      <strong>{item.modeLabel}</strong>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </section>
 
@@ -871,7 +1043,7 @@ export default function Page() {
               </section>
 
               <div className="footer-note">
-                回测逻辑：只判断特码是否落入36码，不判断平码。历史命中率高不代表下一期一定命中。
+                回测逻辑：只判断特码是否落入36码，不判断平码。金额回测按“每期总投入 / 36 = 单码投注额”，命中后按赔率回款。历史命中率高不代表下一期一定命中。
               </div>
             </>
           )}
