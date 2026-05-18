@@ -486,7 +486,7 @@ function buildRecommend(beforeHistory, strategy) {
 }
 
 
-function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = []) {
+function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = [], hotCount = 36, coldCount = 0) {
   const occurrenceMap = new Map()
 
   for (let i = 1; i <= 49; i++) {
@@ -525,25 +525,45 @@ function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = []) {
     })
   })
 
-  const recommendNumbers = Array.from(occurrenceMap.values())
+  const rankingHigh = Array.from(occurrenceMap.values()).sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count
+    if (b.scoreTotal !== a.scoreTotal) return b.scoreTotal - a.scoreTotal
+    return a.num - b.num
+  })
+
+  const hotNumbers = rankingHigh.slice(0, hotCount).map((item) => ({
+    num: item.num,
+    count: item.count,
+    scoreTotal: Number(item.scoreTotal.toFixed(2)),
+    strategies: item.strategies,
+    type: 'hot',
+  }))
+
+  const hotSet = new Set(hotNumbers.map((item) => item.num))
+
+  const coldNumbers = rankingHigh
+    .filter((item) => !hotSet.has(item.num))
     .sort((a, b) => {
-      if (b.count !== a.count) return b.count - a.count
-      if (b.scoreTotal !== a.scoreTotal) return b.scoreTotal - a.scoreTotal
+      if (a.count !== b.count) return a.count - b.count
+      if (a.scoreTotal !== b.scoreTotal) return a.scoreTotal - b.scoreTotal
       return a.num - b.num
     })
-    .slice(0, 36)
+    .slice(0, coldCount)
     .map((item) => ({
       num: item.num,
       count: item.count,
       scoreTotal: Number(item.scoreTotal.toFixed(2)),
       strategies: item.strategies,
-      type: 'hot',
+      type: 'cold',
     }))
-    .sort((a, b) => a.num - b.num)
+
+  const recommendNumbers = [...hotNumbers, ...coldNumbers].sort(
+    (a, b) => a.num - b.num
+  )
 
   return {
-    hotNumbers: recommendNumbers,
-    coldNumbers: [],
+    hotNumbers,
+    coldNumbers,
     recommendNumbers,
     sourceStrategyCount: usableStrategies.length,
     totalCandidateCount: usableStrategies.length * 36,
@@ -552,7 +572,7 @@ function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = []) {
 
 function buildRecommendByStrategy(beforeHistory, strategy) {
   if (strategy?.mode === 'aggregateTop20') {
-    return buildTop20AggregateRecommend(beforeHistory, strategy.aggregateStrategies || [])
+    return buildTop20AggregateRecommend(beforeHistory, strategy.aggregateStrategies || [], strategy.hotCount || 36, strategy.coldCount || 0)
   }
 
   return buildRecommend(beforeHistory, strategy)
@@ -643,29 +663,64 @@ function buildStrategyRanking(history) {
 
   const top20BaseStrategies = sortedBaseResults.slice(0, 20)
 
-  const aggregateStrategyBase = {
-    id: 'aggregate-top20-frequency',
-    mode: 'aggregateTop20',
-    modeLabel: '20档位综合出现率',
-    desc: '取策略排行榜前20个档位，每个档位筛选36码，共720个号码，统计出现次数最高的前36个号码。',
-    sampleSize: 30,
-    hotCount: 36,
-    coldCount: 0,
-    label: '20档位综合｜前20档 × 36码｜出现率最高36码',
-    aggregateStrategies: top20BaseStrategies,
-  }
+  const aggregateCombos = [
+    {
+      hotCount: 36,
+      coldCount: 0,
+      label: '20档位综合｜前20档 × 36码｜出现率最高36码',
+      desc: '取策略排行榜前20个档位，每个档位筛选36码，共720个号码，统计出现次数最高的前36个号码。',
+    },
+    {
+      hotCount: 30,
+      coldCount: 6,
+      label: '20档位综合｜30热 + 6冷｜前20档出现率',
+      desc: '取前20个档位共720个号码，选出现次数最高30个作为热码，再选出现次数最低6个作为冷码。',
+    },
+    {
+      hotCount: 26,
+      coldCount: 10,
+      label: '20档位综合｜26热 + 10冷｜前20档出现率',
+      desc: '取前20个档位共720个号码，选出现次数最高26个作为热码，再选出现次数最低10个作为冷码。',
+    },
+    {
+      hotCount: 24,
+      coldCount: 12,
+      label: '20档位综合｜24热 + 12冷｜前20档出现率',
+      desc: '取前20个档位共720个号码，选出现次数最高24个作为热码，再选出现次数最低12个作为冷码。',
+    },
+    {
+      hotCount: 18,
+      coldCount: 18,
+      label: '20档位综合｜18热 + 18冷｜前20档出现率',
+      desc: '取前20个档位共720个号码，选出现次数最高18个作为热码，再选出现次数最低18个作为冷码。',
+    },
+  ]
 
-  const aggregateResult100 = testStrategy(history, aggregateStrategyBase, 100)
-  const aggregateResult50 = testStrategy(history, aggregateStrategyBase, 50)
+  const aggregateStrategies = aggregateCombos.map((combo) => {
+    const aggregateStrategyBase = {
+      id: `aggregate-top20-${combo.hotCount}-${combo.coldCount}`,
+      mode: 'aggregateTop20',
+      modeLabel: `20档位综合 ${combo.hotCount}热+${combo.coldCount}冷`,
+      desc: combo.desc,
+      sampleSize: 30,
+      hotCount: combo.hotCount,
+      coldCount: combo.coldCount,
+      label: combo.label,
+      aggregateStrategies: top20BaseStrategies,
+    }
 
-  const aggregateStrategy = {
-    ...aggregateStrategyBase,
-    result100: aggregateResult100,
-    result50: aggregateResult50,
-    score: Number((aggregateResult100.hitRate * 0.7 + aggregateResult50.hitRate * 0.3).toFixed(2)),
-  }
+    const aggregateResult100 = testStrategy(history, aggregateStrategyBase, 100)
+    const aggregateResult50 = testStrategy(history, aggregateStrategyBase, 50)
 
-  const results = [aggregateStrategy, ...sortedBaseResults]
+    return {
+      ...aggregateStrategyBase,
+      result100: aggregateResult100,
+      result50: aggregateResult50,
+      score: Number((aggregateResult100.hitRate * 0.7 + aggregateResult50.hitRate * 0.3).toFixed(2)),
+    }
+  })
+
+  const results = [...aggregateStrategies, ...sortedBaseResults]
 
   return results.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
@@ -1193,7 +1248,7 @@ export default function Page() {
                 {currentStrategy?.mode === 'aggregateTop20' && (
                   <div>
                     <span>综合统计</span>
-                    <strong>20档×36码，取出现率前36</strong>
+                    <strong>20档×36码，{currentStrategy.hotCount}热 + {currentStrategy.coldCount}冷</strong>
                   </div>
                 )}
               </div>
@@ -1266,7 +1321,7 @@ export default function Page() {
                   <span>{currentStrategy.mode === 'aggregateTop20' ? '综合来源' : '热码 + 冷码'}</span>
                   <strong>
                     {currentStrategy.mode === 'aggregateTop20'
-                      ? '20档 × 36码 = 720码，取前36'
+                      ? `20档 × 36码 = 720码，${currentStrategy.hotCount}热 + ${currentStrategy.coldCount}冷`
                       : `${currentStrategy.hotCount} + ${currentStrategy.coldCount} = 36码`}
                   </strong>
                 </div>
@@ -1772,7 +1827,7 @@ export default function Page() {
 
                     <div>
                       <span>组合</span>
-                      <strong>{currentStrategy.mode === 'aggregateTop20' ? '720码出现率前36' : `热${currentStrategy.hotCount} + 冷${currentStrategy.coldCount}`}</strong>
+                      <strong>{currentStrategy.mode === 'aggregateTop20' ? `720码里选 ${currentStrategy.hotCount}热 + ${currentStrategy.coldCount}冷` : `热${currentStrategy.hotCount} + 冷${currentStrategy.coldCount}`}</strong>
                     </div>
 
                     <div>
