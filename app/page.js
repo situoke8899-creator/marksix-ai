@@ -27,6 +27,208 @@ function getWave(num) {
   return 'green'
 }
 
+function getWaveText(num) {
+  if (redWave.includes(Number(num))) return '红'
+  if (blueWave.includes(Number(num))) return '蓝'
+  return '绿'
+}
+
+function getZodiac(num, openTime) {
+  const n = Number(num)
+  const date = String(openTime || '')
+  const year = Number(date.slice(0, 4)) || new Date().getFullYear()
+
+  // 2026年对应：01/13/25/37/49 = 马，然后按号码分组顺序排列。
+  const baseYear = 2026
+  const baseZodiacs = ['马', '蛇', '龙', '兔', '虎', '牛', '鼠', '猪', '狗', '鸡', '猴', '羊']
+  const offset = ((year - baseYear) % 12 + 12) % 12
+  const zodiacs = baseZodiacs.map((_, index) => baseZodiacs[(index - offset + 12) % 12])
+
+  const groups = [
+    [1, 13, 25, 37, 49],
+    [2, 14, 26, 38],
+    [3, 15, 27, 39],
+    [4, 16, 28, 40],
+    [5, 17, 29, 41],
+    [6, 18, 30, 42],
+    [7, 19, 31, 43],
+    [8, 20, 32, 44],
+    [9, 21, 33, 45],
+    [10, 22, 34, 46],
+    [11, 23, 35, 47],
+    [12, 24, 36, 48],
+  ]
+
+  const index = groups.findIndex((nums) => nums.includes(n))
+  return index >= 0 ? zodiacs[index] : ''
+}
+
+function getOddEven(num) {
+  return Number(num) % 2 === 0 ? '双' : '单'
+}
+
+function getBigSmall(num) {
+  return Number(num) >= 25 ? '大' : '小'
+}
+
+function digitSum(num) {
+  return String(Number(num) || 0)
+    .split('')
+    .reduce((total, item) => total + Number(item), 0)
+}
+
+function getSumOddEven(num) {
+  return digitSum(num) % 2 === 0 ? '合双' : '合单'
+}
+
+function getSumBigSmall(num) {
+  return digitSum(num) >= 7 ? '合大' : '合小'
+}
+
+function getTailBigSmall(num) {
+  const tail = Number(String(num).slice(-1))
+  return tail >= 5 ? '尾大' : '尾小'
+}
+
+function getDetailRecord(item) {
+  const numbers = item?.numbers || []
+  const specialNumber = item?.specialNumber || numbers[numbers.length - 1]
+  const sum = numbers.reduce((total, num) => total + Number(num), 0)
+
+  const numbersDetail = numbers.map((num, index) => ({
+    num,
+    zodiac: getZodiac(num, item.openTime),
+    wave: getWaveText(num),
+    isSpecial: index === numbers.length - 1,
+  }))
+
+  return {
+    ...item,
+    numbersDetail,
+    specialNumber,
+    specialDetail: numbersDetail[numbersDetail.length - 1],
+    sum,
+    sumOddEven: sum % 2 === 0 ? '双' : '单',
+    sumBigSmall: sum >= 175 ? '大' : '小',
+    specialOddEven: getOddEven(specialNumber),
+    specialBigSmall: getBigSmall(specialNumber),
+    specialSumOddEven: getSumOddEven(specialNumber),
+    specialSumBigSmall: getSumBigSmall(specialNumber),
+    specialTailBigSmall: getTailBigSmall(specialNumber),
+  }
+}
+
+function DetailNumber({ detail, hit = false, hitType = 'normal' }) {
+  const num = Number(detail?.num)
+  const wave = getWave(num)
+  const outlineColor = hit ? (hitType === 'special' ? '#facc15' : '#fde68a') : undefined
+
+  return (
+    <span className="detail-number">
+      <span
+        className={`mini-ball ${wave}`}
+        style={
+          hit
+            ? {
+                outline: `3px solid ${outlineColor}`,
+                boxShadow: `0 0 10px ${outlineColor}`,
+              }
+            : undefined
+        }
+      >
+        {String(num).padStart(2, '0')}
+      </span>
+      <span className="mini-zodiac">{detail?.zodiac || getZodiac(num)}</span>
+    </span>
+  )
+}
+
+function DetailBacktestTable({ title, rows, limit = 100 }) {
+  return (
+    <section className="card">
+      <div className="card-title">{title}</div>
+      <p className="section-desc">
+        表格按开奖站样式展示。黄色圈 = 落入当期筛选36码；绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
+      </p>
+
+      <div className="detail-table-wrap">
+        <table className="detail-table">
+          <thead>
+            <tr>
+              <th>日期 / 期数</th>
+              <th>正码</th>
+              <th>特码</th>
+              <th>总和</th>
+              <th>总和单双</th>
+              <th>总和大小</th>
+              <th>七色波</th>
+              <th>特码单双</th>
+              <th>特码大小</th>
+              <th>特码合单双</th>
+              <th>特码合大小</th>
+              <th>尾大小</th>
+              <th>命中结果</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.slice(0, limit).map((rawItem) => {
+              const item = getDetailRecord(rawItem)
+              const recommendSet = new Set(item.recommendNumbers?.map((n) => n.num))
+              const normalDetails = item.numbersDetail.slice(0, 6)
+              const specialDetail = item.numbersDetail[6]
+              const specialHit = recommendSet.has(item.specialNumber)
+
+              return (
+                <tr key={item.expect}>
+                  <td className="issue-cell">
+                    <strong>{item.openTime || '-'}</strong>
+                    <span>第 {item.expect} 期</span>
+                  </td>
+
+                  <td className="numbers-cell">
+                    {normalDetails.map((detail, index) => (
+                      <DetailNumber
+                        key={`${item.expect}-${detail.num}-${index}`}
+                        detail={detail}
+                        hit={recommendSet.has(detail.num)}
+                        hitType="normal"
+                      />
+                    ))}
+                  </td>
+
+                  <td className="special-cell">
+                    <DetailNumber
+                      detail={specialDetail}
+                      hit={specialHit}
+                      hitType="special"
+                    />
+                  </td>
+
+                  <td>{item.sum}</td>
+                  <td className={item.sumOddEven === '双' ? 'red-text' : ''}>{item.sumOddEven}</td>
+                  <td className={item.sumBigSmall === '大' ? 'red-text' : ''}>{item.sumBigSmall}</td>
+                  <td className={`${getWave(item.specialNumber)}-text`}>{getWaveText(item.specialNumber)}</td>
+                  <td className={item.specialOddEven === '双' ? 'red-text' : ''}>{item.specialOddEven}</td>
+                  <td className={item.specialBigSmall === '大' ? 'red-text' : ''}>{item.specialBigSmall}</td>
+                  <td className={item.specialSumOddEven === '合双' ? 'red-text' : ''}>{item.specialSumOddEven}</td>
+                  <td className={item.specialSumBigSmall === '合大' ? 'red-text' : ''}>{item.specialSumBigSmall}</td>
+                  <td className={item.specialTailBigSmall === '尾大' ? 'red-text' : ''}>{item.specialTailBigSmall}</td>
+
+                  <td className={item.hit ? 'hit-text' : 'miss-text'}>
+                    特码 {String(item.specialNumber).padStart(2, '0')}：
+                    {item.hotHit ? '热码命中' : item.coldHit ? '冷码命中' : '未命中'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
 function formatMoney(value) {
   const num = Number(value || 0)
   return `¥${num.toFixed(2)}`
@@ -464,7 +666,20 @@ export default function Page() {
         cache: 'no-store',
       })
 
-      const json = await res.json()
+      const text = await res.text()
+
+      if (!text || !text.trim()) {
+        throw new Error(`${playConfig.name}接口返回空内容，请检查 app/api/history/route.js`)
+      }
+
+      let json
+
+      try {
+        json = JSON.parse(text)
+      } catch (error) {
+        console.log(`${playConfig.name}接口原始返回内容：`, text)
+        throw new Error(`${playConfig.name}接口返回的不是JSON，请检查 app/api/history/route.js`)
+      }
 
       if (!json.ok) {
         throw new Error(json.message || '数据获取失败')
@@ -643,6 +858,122 @@ export default function Page() {
         .play-box.active {
           box-shadow: 0 0 20px rgba(250, 204, 21, 0.65);
           background: rgba(250, 204, 21, 0.12);
+        }
+
+
+        .detail-table-wrap {
+          overflow-x: auto;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 14px;
+          margin-top: 16px;
+        }
+
+        .detail-table {
+          width: 100%;
+          min-width: 1220px;
+          border-collapse: collapse;
+          font-size: 13px;
+          color: #fff;
+        }
+
+        .detail-table th,
+        .detail-table td {
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+          border-right: 1px solid rgba(255, 255, 255, 0.08);
+          padding: 10px 8px;
+          text-align: center;
+          white-space: nowrap;
+        }
+
+        .detail-table th {
+          background: rgba(255, 255, 255, 0.08);
+          color: #f8fafc;
+          font-weight: 800;
+        }
+
+        .issue-cell {
+          text-align: left !important;
+          min-width: 120px;
+        }
+
+        .issue-cell strong,
+        .issue-cell span {
+          display: block;
+        }
+
+        .issue-cell span {
+          margin-top: 4px;
+          color: #cbd5e1;
+        }
+
+        .numbers-cell {
+          min-width: 360px;
+          text-align: left !important;
+        }
+
+        .special-cell {
+          min-width: 70px;
+        }
+
+        .detail-number {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          margin: 3px 5px;
+        }
+
+        .mini-ball {
+          width: 30px;
+          height: 30px;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: #fff;
+          font-weight: 900;
+          font-size: 13px;
+        }
+
+        .mini-ball.red {
+          background: linear-gradient(145deg, #ef4444, #b91c1c);
+        }
+
+        .mini-ball.blue {
+          background: linear-gradient(145deg, #3b82f6, #1d4ed8);
+        }
+
+        .mini-ball.green {
+          background: linear-gradient(145deg, #22c55e, #15803d);
+        }
+
+        .mini-zodiac {
+          color: #f8fafc;
+          font-weight: 700;
+        }
+
+        .red-text {
+          color: #f43f5e;
+          font-weight: 800;
+        }
+
+        .blue-text {
+          color: #38bdf8;
+          font-weight: 800;
+        }
+
+        .green-text {
+          color: #22c55e;
+          font-weight: 800;
+        }
+
+        .hit-text {
+          color: #facc15;
+          font-weight: 800;
+        }
+
+        .miss-text {
+          color: #94a3b8;
+          font-weight: 700;
         }
       `}</style>
 
@@ -1315,93 +1646,9 @@ export default function Page() {
                 </div>
               </section>
 
-              <section className="card">
-                <div className="card-title">近100期回测明细</div>
-                <p className="section-desc">
-                  每一期都用它之前的数据生成36码。绿色圈 = 平码落入36码；黄色圈 = 特码落入36码。
-                </p>
+              <DetailBacktestTable title="近100期回测明细" rows={best100Rows} limit={100} />
 
-                <div className="history-list">
-                  {best100Rows.slice(0, 30).map((item) => (
-                    <div key={item.expect} className="history-row">
-                      <div className="history-meta">
-                        <strong>第 {item.expect} 期</strong>
-                        <span>{item.openTime}</span>
-                        <span style={{ display: 'block', marginTop: '6px', color: item.hit ? '#facc15' : '#a1a1aa' }}>
-                          特码 {String(item.specialNumber).padStart(2, '0')}：
-                          {item.hotHit ? '热码命中' : item.coldHit ? '冷码命中' : '未命中'}
-                        </span>
-                      </div>
-
-                      <div className="history-balls">
-                        {item.numbers.map((num, index) => {
-                          const inRecommend = item.recommendNumbers?.some(
-                            (recommend) => recommend.num === num
-                          )
-
-                          const isSpecial = index === 6
-
-                          return (
-                            <React.Fragment key={`${item.expect}-${num}-${index}`}>
-                              {isSpecial && <span className="history-plus">+</span>}
-                              <Ball
-                                num={num}
-                                small
-                                hit={inRecommend}
-                                hitType={isSpecial ? 'special' : 'normal'}
-                              />
-                            </React.Fragment>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="card">
-                <div className="card-title">近50期回测明细</div>
-                <p className="section-desc">
-                  每一期都用它之前的数据生成36码。绿色圈 = 平码落入36码；黄色圈 = 特码落入36码。
-                </p>
-
-                <div className="history-list">
-                  {best50Rows.slice(0, 30).map((item) => (
-                    <div key={item.expect} className="history-row">
-                      <div className="history-meta">
-                        <strong>第 {item.expect} 期</strong>
-                        <span>{item.openTime}</span>
-                        <span style={{ display: 'block', marginTop: '6px', color: item.hit ? '#facc15' : '#a1a1aa' }}>
-                          特码 {String(item.specialNumber).padStart(2, '0')}：
-                          {item.hotHit ? '热码命中' : item.coldHit ? '冷码命中' : '未命中'}
-                        </span>
-                      </div>
-
-                      <div className="history-balls">
-                        {item.numbers.map((num, index) => {
-                          const inRecommend = item.recommendNumbers?.some(
-                            (recommend) => recommend.num === num
-                          )
-
-                          const isSpecial = index === 6
-
-                          return (
-                            <React.Fragment key={`${item.expect}-${num}-${index}`}>
-                              {isSpecial && <span className="history-plus">+</span>}
-                              <Ball
-                                num={num}
-                                small
-                                hit={inRecommend}
-                                hitType={isSpecial ? 'special' : 'normal'}
-                              />
-                            </React.Fragment>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
+              <DetailBacktestTable title="近50期回测明细" rows={best50Rows} limit={50} />
 
               <div className="footer-note">
                 回测逻辑：绿色圈表示前6个平码落入当期筛选36码；黄色圈表示最后特码落入当期筛选36码。金额回测只按特码命中计算。
