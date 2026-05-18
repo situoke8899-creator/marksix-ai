@@ -148,26 +148,30 @@ function DetailBacktestTable({ title, rows, limit = 100 }) {
     <section className="card">
       <div className="card-title">{title}</div>
       <p className="section-desc">
-        表格按开奖站样式展示。黄色圈 = 落入当期筛选36码；绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
+        表格按开奖站样式展示，号码显示波色与生肖。黄色圈 = 落入当期筛选36码；绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
       </p>
 
       <div className="detail-table-wrap">
         <table className="detail-table">
           <thead>
             <tr>
-              <th>日期 / 期数</th>
-              <th>正码</th>
-              <th>特码</th>
-              <th>总和</th>
-              <th>总和单双</th>
-              <th>总和大小</th>
+              <th rowSpan="2">日期/期数</th>
+              <th rowSpan="2">正码</th>
+              <th rowSpan="2">特码</th>
+              <th colSpan="4">总和</th>
+              <th colSpan="5">特码</th>
+              <th rowSpan="2">命中结果</th>
+            </tr>
+            <tr>
+              <th>总数</th>
+              <th>单双</th>
+              <th>大小</th>
               <th>七色波</th>
-              <th>特码单双</th>
-              <th>特码大小</th>
-              <th>特码合单双</th>
-              <th>特码合大小</th>
+              <th>单双</th>
+              <th>大小</th>
+              <th>合单双</th>
+              <th>合大小</th>
               <th>尾大小</th>
-              <th>命中结果</th>
             </tr>
           </thead>
 
@@ -863,56 +867,65 @@ export default function Page() {
 
         .detail-table-wrap {
           overflow-x: auto;
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          border-radius: 14px;
+          border: 1px solid #d9d9d9;
+          border-radius: 0;
           margin-top: 16px;
+          background: #ffffff;
         }
 
         .detail-table {
-          width: 100%;
-          min-width: 1220px;
+          width: max-content;
+          min-width: 1240px;
           border-collapse: collapse;
-          font-size: 13px;
-          color: #fff;
+          font-size: 14px;
+          color: #111827;
+          background: #ffffff;
         }
 
         .detail-table th,
         .detail-table td {
-          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-          border-right: 1px solid rgba(255, 255, 255, 0.08);
+          border: 1px solid #d9d9d9;
           padding: 10px 8px;
           text-align: center;
           white-space: nowrap;
+          background: #ffffff;
+          vertical-align: middle;
         }
 
-        .detail-table th {
-          background: rgba(255, 255, 255, 0.08);
-          color: #f8fafc;
+        .detail-table thead th {
+          background: #f3f4f6;
+          color: #111827;
           font-weight: 800;
+        }
+
+        .detail-table tbody tr:hover td {
+          background: #fffaf0;
         }
 
         .issue-cell {
           text-align: left !important;
-          min-width: 120px;
+          min-width: 138px;
+          color: #111827;
+          font-weight: 700;
         }
 
         .issue-cell strong,
         .issue-cell span {
-          display: block;
+          display: inline;
         }
 
         .issue-cell span {
-          margin-top: 4px;
-          color: #cbd5e1;
+          margin-left: 4px;
+          color: #111827;
         }
 
         .numbers-cell {
-          min-width: 360px;
+          min-width: 385px;
           text-align: left !important;
         }
 
         .special-cell {
-          min-width: 70px;
+          min-width: 92px;
         }
 
         .detail-number {
@@ -923,56 +936,57 @@ export default function Page() {
         }
 
         .mini-ball {
-          width: 30px;
-          height: 30px;
+          width: 32px;
+          height: 32px;
           border-radius: 999px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
           color: #fff;
           font-weight: 900;
-          font-size: 13px;
+          font-size: 14px;
+          box-shadow: none;
         }
 
         .mini-ball.red {
-          background: linear-gradient(145deg, #ef4444, #b91c1c);
+          background: #ff2448;
         }
 
         .mini-ball.blue {
-          background: linear-gradient(145deg, #3b82f6, #1d4ed8);
+          background: #1296db;
         }
 
         .mini-ball.green {
-          background: linear-gradient(145deg, #22c55e, #15803d);
+          background: #22c55e;
         }
 
         .mini-zodiac {
-          color: #f8fafc;
+          color: #111827;
           font-weight: 700;
         }
 
         .red-text {
-          color: #f43f5e;
+          color: #ff2448;
           font-weight: 800;
         }
 
         .blue-text {
-          color: #38bdf8;
+          color: #1296db;
           font-weight: 800;
         }
 
         .green-text {
-          color: #22c55e;
+          color: #16a34a;
           font-weight: 800;
         }
 
         .hit-text {
-          color: #facc15;
+          color: #d97706;
           font-weight: 800;
         }
 
         .miss-text {
-          color: #94a3b8;
+          color: #111827;
           font-weight: 700;
         }
       `}</style>
