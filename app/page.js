@@ -485,6 +485,88 @@ function buildRecommend(beforeHistory, strategy) {
   }
 }
 
+
+function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = []) {
+  const occurrenceMap = new Map()
+
+  for (let i = 1; i <= 49; i++) {
+    occurrenceMap.set(i, {
+      num: i,
+      count: 0,
+      scoreTotal: 0,
+      strategies: 0,
+      type: 'hot',
+    })
+  }
+
+  const usableStrategies = aggregateStrategies
+    .filter((strategy) => strategy && beforeHistory.length >= strategy.sampleSize)
+    .slice(0, 20)
+
+  usableStrategies.forEach((strategy) => {
+    const analysis = buildRecommend(beforeHistory, strategy)
+
+    analysis.recommendNumbers.forEach((item) => {
+      const old = occurrenceMap.get(item.num) || {
+        num: item.num,
+        count: 0,
+        scoreTotal: 0,
+        strategies: 0,
+        type: 'hot',
+      }
+
+      occurrenceMap.set(item.num, {
+        ...old,
+        count: old.count + 1,
+        scoreTotal: old.scoreTotal + Number(item.count || 0),
+        strategies: old.strategies + 1,
+        type: 'hot',
+      })
+    })
+  })
+
+  const recommendNumbers = Array.from(occurrenceMap.values())
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count
+      if (b.scoreTotal !== a.scoreTotal) return b.scoreTotal - a.scoreTotal
+      return a.num - b.num
+    })
+    .slice(0, 36)
+    .map((item) => ({
+      num: item.num,
+      count: item.count,
+      scoreTotal: Number(item.scoreTotal.toFixed(2)),
+      strategies: item.strategies,
+      type: 'hot',
+    }))
+    .sort((a, b) => a.num - b.num)
+
+  return {
+    hotNumbers: recommendNumbers,
+    coldNumbers: [],
+    recommendNumbers,
+    sourceStrategyCount: usableStrategies.length,
+    totalCandidateCount: usableStrategies.length * 36,
+  }
+}
+
+function buildRecommendByStrategy(beforeHistory, strategy) {
+  if (strategy?.mode === 'aggregateTop20') {
+    return buildTop20AggregateRecommend(beforeHistory, strategy.aggregateStrategies || [])
+  }
+
+  return buildRecommend(beforeHistory, strategy)
+}
+
+function getRequiredSampleSize(strategy) {
+  if (strategy?.mode === 'aggregateTop20') {
+    const sizes = (strategy.aggregateStrategies || []).map((item) => item.sampleSize || 0)
+    return sizes.length ? Math.min(...sizes) : 30
+  }
+
+  return strategy?.sampleSize || 30
+}
+
 function testStrategy(history, strategy, rangeSize) {
   const rows = []
 
@@ -492,9 +574,9 @@ function testStrategy(history, strategy, rangeSize) {
     const target = history[index]
     const beforeHistory = history.slice(index + 1)
 
-    if (beforeHistory.length < strategy.sampleSize) continue
+    if (beforeHistory.length < getRequiredSampleSize(strategy)) continue
 
-    const analysis = buildRecommend(beforeHistory, strategy)
+    const analysis = buildRecommendByStrategy(beforeHistory, strategy)
     const specialNumber = target.numbers[target.numbers.length - 1]
 
     const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
@@ -541,7 +623,7 @@ function testStrategy(history, strategy, rangeSize) {
 function buildStrategyRanking(history) {
   const strategies = makeStrategies()
 
-  const results = strategies.map((strategy) => {
+  const baseResults = strategies.map((strategy) => {
     const result100 = testStrategy(history, strategy, 100)
     const result50 = testStrategy(history, strategy, 50)
 
@@ -552,6 +634,38 @@ function buildStrategyRanking(history) {
       score: Number((result100.hitRate * 0.7 + result50.hitRate * 0.3).toFixed(2)),
     }
   })
+
+  const sortedBaseResults = [...baseResults].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    if (b.result100.hitRate !== a.result100.hitRate) return b.result100.hitRate - a.result100.hitRate
+    return b.result50.hitRate - a.result50.hitRate
+  })
+
+  const top20BaseStrategies = sortedBaseResults.slice(0, 20)
+
+  const aggregateStrategyBase = {
+    id: 'aggregate-top20-frequency',
+    mode: 'aggregateTop20',
+    modeLabel: '20档位综合出现率',
+    desc: '取策略排行榜前20个档位，每个档位筛选36码，共720个号码，统计出现次数最高的前36个号码。',
+    sampleSize: 30,
+    hotCount: 36,
+    coldCount: 0,
+    label: '20档位综合｜前20档 × 36码｜出现率最高36码',
+    aggregateStrategies: top20BaseStrategies,
+  }
+
+  const aggregateResult100 = testStrategy(history, aggregateStrategyBase, 100)
+  const aggregateResult50 = testStrategy(history, aggregateStrategyBase, 50)
+
+  const aggregateStrategy = {
+    ...aggregateStrategyBase,
+    result100: aggregateResult100,
+    result50: aggregateResult50,
+    score: Number((aggregateResult100.hitRate * 0.7 + aggregateResult50.hitRate * 0.3).toFixed(2)),
+  }
+
+  const results = [aggregateStrategy, ...sortedBaseResults]
 
   return results.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
@@ -572,9 +686,9 @@ function buildSingleBacktest(history, targetExpect, strategy) {
   const target = history[targetIndex]
   const beforeHistory = history.slice(targetIndex + 1)
 
-  if (beforeHistory.length < strategy.sampleSize) return null
+  if (beforeHistory.length < getRequiredSampleSize(strategy)) return null
 
-  const analysis = buildRecommend(beforeHistory, strategy)
+  const analysis = buildRecommendByStrategy(beforeHistory, strategy)
   const specialNumber = target.numbers[target.numbers.length - 1]
 
   const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
@@ -753,7 +867,7 @@ export default function Page() {
 
   const nextAnalysis =
     currentStrategy && history.length
-      ? buildRecommend(history, currentStrategy)
+      ? buildRecommendByStrategy(history, currentStrategy)
       : null
 
   const nextExpect = getNextExpectByPlay(history, data, currentPlay)
@@ -1075,6 +1189,13 @@ export default function Page() {
                   <span>最终推荐</span>
                   <strong>{nextRecommendNumbers.length}个</strong>
                 </div>
+
+                {currentStrategy?.mode === 'aggregateTop20' && (
+                  <div>
+                    <span>综合统计</span>
+                    <strong>20档×36码，取出现率前36</strong>
+                  </div>
+                )}
               </div>
 
               <div className="ball-grid recommend-grid">
@@ -1142,9 +1263,11 @@ export default function Page() {
                 </div>
 
                 <div>
-                  <span>热码 + 冷码</span>
+                  <span>{currentStrategy.mode === 'aggregateTop20' ? '综合来源' : '热码 + 冷码'}</span>
                   <strong>
-                    {currentStrategy.hotCount} + {currentStrategy.coldCount} = 36码
+                    {currentStrategy.mode === 'aggregateTop20'
+                      ? '20档 × 36码 = 720码，取前36'
+                      : `${currentStrategy.hotCount} + ${currentStrategy.coldCount} = 36码`}
                   </strong>
                 </div>
               </div>
@@ -1643,13 +1766,13 @@ export default function Page() {
                     </div>
 
                     <div>
-                      <span>样本期数</span>
-                      <strong>前{currentStrategy.sampleSize}期</strong>
+                      <span>样本/来源</span>
+                      <strong>{currentStrategy.mode === 'aggregateTop20' ? '前20档位综合' : `前${currentStrategy.sampleSize}期`}</strong>
                     </div>
 
                     <div>
                       <span>组合</span>
-                      <strong>热{currentStrategy.hotCount} + 冷{currentStrategy.coldCount}</strong>
+                      <strong>{currentStrategy.mode === 'aggregateTop20' ? '720码出现率前36' : `热${currentStrategy.hotCount} + 冷${currentStrategy.coldCount}`}</strong>
                     </div>
 
                     <div>
