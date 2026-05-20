@@ -565,27 +565,28 @@ function getHeadNumber(num) {
   return 4
 }
 
-function buildHeadRecommend(beforeHistory, sampleSize = 30, hotHeadCount = 3, coldHeadCount = 1) {
-  const source = beforeHistory.slice(0, sampleSize)
-
-  const counts = {
+function makeEmptyHeadCounts() {
+  return {
     0: 0,
     1: 0,
     2: 0,
     3: 0,
     4: 0,
   }
+}
+
+function buildSpecialHeadRanking(beforeHistory, sampleSize = 30) {
+  const source = beforeHistory.slice(0, sampleSize)
+  const counts = makeEmptyHeadCounts()
 
   source.forEach((item) => {
     const numbers = item.numbers || []
+    const specialNumber = numbers[numbers.length - 1]
+    const head = getHeadNumber(specialNumber)
 
-    numbers.forEach((num) => {
-      const head = getHeadNumber(num)
-
-      if (head !== '') {
-        counts[head] += 1
-      }
-    })
+    if (head !== '') {
+      counts[head] += 1
+    }
   })
 
   const ranking = Object.entries(counts).map(([head, count]) => ({
@@ -593,11 +594,28 @@ function buildHeadRecommend(beforeHistory, sampleSize = 30, hotHeadCount = 3, co
     count,
   }))
 
-  const hotHeads = [...ranking]
-    .sort((a, b) => {
-      if (b.count !== a.count) return b.count - a.count
-      return a.head - b.head
-    })
+  const hotRanking = [...ranking].sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count
+    return a.head - b.head
+  })
+
+  const coldRanking = [...ranking].sort((a, b) => {
+    if (a.count !== b.count) return a.count - b.count
+    return a.head - b.head
+  })
+
+  return {
+    counts,
+    ranking,
+    hotRanking,
+    coldRanking,
+  }
+}
+
+function buildHeadRecommend(beforeHistory, sampleSize = 30, hotHeadCount = 3, coldHeadCount = 1) {
+  const rankingData = buildSpecialHeadRanking(beforeHistory, sampleSize)
+
+  const hotHeads = rankingData.hotRanking
     .slice(0, hotHeadCount)
     .map((item) => ({
       ...item,
@@ -606,12 +624,8 @@ function buildHeadRecommend(beforeHistory, sampleSize = 30, hotHeadCount = 3, co
 
   const hotSet = new Set(hotHeads.map((item) => item.head))
 
-  const coldHeads = [...ranking]
+  const coldHeads = rankingData.coldRanking
     .filter((item) => !hotSet.has(item.head))
-    .sort((a, b) => {
-      if (a.count !== b.count) return a.count - b.count
-      return a.head - b.head
-    })
     .slice(0, coldHeadCount)
     .map((item) => ({
       ...item,
@@ -623,23 +637,174 @@ function buildHeadRecommend(beforeHistory, sampleSize = 30, hotHeadCount = 3, co
   )
 
   return {
-    counts,
+    counts: rankingData.counts,
     hotHeads,
     coldHeads,
     recommendHeads,
   }
 }
 
-function testHeadStrategy(history, sampleSize, hotHeadCount, coldHeadCount, rangeSize) {
+function getOmissionRanking(beforeHistory) {
+  const omissionMap = new Map()
+
+  for (let head = 0; head <= 4; head++) {
+    omissionMap.set(head, {
+      head,
+      omit: beforeHistory.length,
+      count: 0,
+      type: 'cold',
+    })
+  }
+
+  beforeHistory.forEach((item, index) => {
+    const numbers = item.numbers || []
+    const specialNumber = numbers[numbers.length - 1]
+    const head = getHeadNumber(specialNumber)
+
+    if (head === '') return
+
+    const old = omissionMap.get(head)
+
+    omissionMap.set(head, {
+      ...old,
+      count: old.count + 1,
+      omit: old.omit === beforeHistory.length ? index : old.omit,
+    })
+  })
+
+  return Array.from(omissionMap.values()).sort((a, b) => {
+    if (b.omit !== a.omit) return b.omit - a.omit
+    return a.count - b.count
+  })
+}
+
+function uniqueHeadItems(items) {
+  const map = new Map()
+
+  items.forEach((item) => {
+    if (!item || item.head === undefined || item.head === '') return
+
+    if (!map.has(item.head)) {
+      map.set(item.head, item)
+    }
+  })
+
+  return Array.from(map.values()).sort((a, b) => a.head - b.head)
+}
+
+function buildHeadRecommendByConfig(beforeHistory, config) {
+  if (config.kind === 'hotCold') {
+    return buildHeadRecommend(
+      beforeHistory,
+      config.sampleSize,
+      config.hotHeadCount,
+      config.coldHeadCount
+    )
+  }
+
+  if (config.kind === 'hotHotMix') {
+    const rank30 = buildSpecialHeadRanking(beforeHistory, 30)
+    const rank50 = buildSpecialHeadRanking(beforeHistory, 50)
+
+    const hot30 = rank30.hotRanking.slice(0, 2).map((item) => ({
+      ...item,
+      type: 'hot',
+      source: '30期热',
+    }))
+
+    const hot50 = rank50.hotRanking.slice(0, 2).map((item) => ({
+      ...item,
+      type: 'hot',
+      source: '50期热',
+    }))
+
+    const hotHeads = uniqueHeadItems([...hot30, ...hot50])
+
+    return {
+      counts: rank30.counts,
+      hotHeads,
+      coldHeads: [],
+      recommendHeads: hotHeads,
+    }
+  }
+
+  if (config.kind === 'hotColdMix') {
+    const rank30 = buildSpecialHeadRanking(beforeHistory, 30)
+    const rank50 = buildSpecialHeadRanking(beforeHistory, 50)
+
+    const hot30 = rank30.hotRanking.slice(0, 2).map((item) => ({
+      ...item,
+      type: 'hot',
+      source: '30期热',
+    }))
+
+    const hotSet = new Set(hot30.map((item) => item.head))
+
+    const cold50 = rank50.coldRanking
+      .filter((item) => !hotSet.has(item.head))
+      .slice(0, 2)
+      .map((item) => ({
+        ...item,
+        type: 'cold',
+        source: '50期冷',
+      }))
+
+    const hotHeads = uniqueHeadItems(hot30)
+    const coldHeads = uniqueHeadItems(cold50)
+
+    return {
+      counts: rank30.counts,
+      hotHeads,
+      coldHeads,
+      recommendHeads: uniqueHeadItems([...hotHeads, ...coldHeads]),
+    }
+  }
+
+  if (config.kind === 'hotOmit') {
+    const rank30 = buildSpecialHeadRanking(beforeHistory, 30)
+
+    const hotHeads = rank30.hotRanking.slice(0, 2).map((item) => ({
+      ...item,
+      type: 'hot',
+      source: '30期热',
+    }))
+
+    const hotSet = new Set(hotHeads.map((item) => item.head))
+
+    const omissionHeads = getOmissionRanking(beforeHistory)
+      .filter((item) => !hotSet.has(item.head))
+      .slice(0, config.omitHeadCount)
+      .map((item) => ({
+        head: item.head,
+        count: item.omit,
+        omit: item.omit,
+        type: 'cold',
+        source: '最大遗漏',
+      }))
+
+    const coldHeads = uniqueHeadItems(omissionHeads)
+
+    return {
+      counts: rank30.counts,
+      hotHeads,
+      coldHeads,
+      recommendHeads: uniqueHeadItems([...hotHeads, ...coldHeads]),
+    }
+  }
+
+  return buildHeadRecommend(beforeHistory, 30, 3, 1)
+}
+
+function testHeadStrategy(history, config, rangeSize) {
   const rows = []
 
   for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
     const target = history[index]
     const beforeHistory = history.slice(index + 1)
 
-    if (beforeHistory.length < sampleSize) continue
+    if (beforeHistory.length < (config.minSampleSize || config.sampleSize || 30)) continue
 
-    const analysis = buildHeadRecommend(beforeHistory, sampleSize, hotHeadCount, coldHeadCount)
+    const analysis = buildHeadRecommendByConfig(beforeHistory, config)
     const specialNumber = target.numbers[target.numbers.length - 1]
     const specialHead = getHeadNumber(specialNumber)
     const recommendSet = new Set(analysis.recommendHeads.map((item) => item.head))
@@ -673,65 +838,91 @@ function buildHeadStats(history) {
   const configs = [
     {
       id: 'head-30-3hot-1cold',
-      title: '30期头数｜3热 + 1冷',
+      title: '1. 30期｜3热 + 1冷',
+      kind: 'hotCold',
       sampleSize: 30,
+      minSampleSize: 30,
       hotHeadCount: 3,
       coldHeadCount: 1,
     },
     {
       id: 'head-30-2hot-2cold',
-      title: '30期头数｜2热 + 2冷',
+      title: '2. 30期｜2热 + 2冷',
+      kind: 'hotCold',
       sampleSize: 30,
+      minSampleSize: 30,
       hotHeadCount: 2,
       coldHeadCount: 2,
     },
     {
+      id: 'head-30-2hot-1cold',
+      title: '3. 30期｜2热 + 1冷',
+      kind: 'hotCold',
+      sampleSize: 30,
+      minSampleSize: 30,
+      hotHeadCount: 2,
+      coldHeadCount: 1,
+    },
+    {
       id: 'head-50-3hot-1cold',
-      title: '50期头数｜3热 + 1冷',
+      title: '4. 50期｜3热 + 1冷',
+      kind: 'hotCold',
       sampleSize: 50,
+      minSampleSize: 50,
       hotHeadCount: 3,
       coldHeadCount: 1,
     },
     {
       id: 'head-50-2hot-2cold',
-      title: '50期头数｜2热 + 2冷',
+      title: '5. 50期｜2热 + 2冷',
+      kind: 'hotCold',
       sampleSize: 50,
+      minSampleSize: 50,
       hotHeadCount: 2,
       coldHeadCount: 2,
+    },
+    {
+      id: 'head-50-2hot-1cold',
+      title: '6. 50期｜2热 + 1冷',
+      kind: 'hotCold',
+      sampleSize: 50,
+      minSampleSize: 50,
+      hotHeadCount: 2,
+      coldHeadCount: 1,
+    },
+    {
+      id: 'head-30hot2-50hot2',
+      title: '7. 30期热2头 + 50期热2头',
+      kind: 'hotHotMix',
+      minSampleSize: 50,
+    },
+    {
+      id: 'head-30hot2-50cold2',
+      title: '8. 30期热2头 + 50期冷2头',
+      kind: 'hotColdMix',
+      minSampleSize: 50,
+    },
+    {
+      id: 'head-hot2-omit1',
+      title: '9. 热2头 + 最大遗漏1头',
+      kind: 'hotOmit',
+      minSampleSize: 30,
+      omitHeadCount: 1,
+    },
+    {
+      id: 'head-hot2-omit2',
+      title: '10. 热2头 + 最大遗漏2头',
+      kind: 'hotOmit',
+      minSampleSize: 30,
+      omitHeadCount: 2,
     },
   ]
 
   return configs.map((config) => {
-    const nextRecommend = buildHeadRecommend(
-      history,
-      config.sampleSize,
-      config.hotHeadCount,
-      config.coldHeadCount
-    )
-
-    const result100 = testHeadStrategy(
-      history,
-      config.sampleSize,
-      config.hotHeadCount,
-      config.coldHeadCount,
-      100
-    )
-
-    const result50 = testHeadStrategy(
-      history,
-      config.sampleSize,
-      config.hotHeadCount,
-      config.coldHeadCount,
-      50
-    )
-
-    const result30 = testHeadStrategy(
-      history,
-      config.sampleSize,
-      config.hotHeadCount,
-      config.coldHeadCount,
-      30
-    )
+    const nextRecommend = buildHeadRecommendByConfig(history, config)
+    const result100 = testHeadStrategy(history, config, 100)
+    const result50 = testHeadStrategy(history, config, 50)
+    const result30 = testHeadStrategy(history, config, 30)
 
     return {
       ...config,
@@ -1222,12 +1413,24 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">30期 / 50期开奖号码头数预测统计</div>
+            <div className="card-title">30期 / 50期最后特码头数预测统计</div>
 
             <p className="desc">
               头数规则：01-09 = 0头，10-19 = 1头，20-29 = 2头，30-39 = 3头，40-49 = 4头。
-              系统分别抓取最近30期、50期的全部开奖号码头数，预测下一期最后特码会落在哪些头数里，并回测近100期、50期、30期命中率。
+              这里只统计每期开奖最后一个特码的头数，不统计前6个正码。系统会显示本期最后特码头数，并用下面10组方案预测下一期可能出现的头数。
             </p>
+
+            <div className="summary-grid">
+              {headStats.map((item) => (
+                <div key={`next-head-${item.id}`} className="stat">
+                  <span>{item.title}｜预测下一期头数</span>
+                  <strong>
+                    {item.nextRecommend.recommendHeads.map((headItem) => `${headItem.head}头`).join('、')}
+                  </strong>
+                </div>
+              ))}
+            </div>
+
 
             <div className="head-grid">
               {headStats.map((item) => (
