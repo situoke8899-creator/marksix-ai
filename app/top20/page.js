@@ -15,10 +15,6 @@ const PLAY_CONFIG = {
   },
 }
 
-function formatNumber(num) {
-  return String(num || '').padStart(2, '0')
-}
-
 function formatMoney(value) {
   const num = Number(value || 0)
   return `¥${num.toFixed(2)}`
@@ -30,11 +26,15 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
   const totalCost = testedCount * totalBetPerIssue
   const totalReturn = hitCount * returnPerHit
   const profit = totalReturn - totalCost
+  const roi = totalCost ? ((profit / totalCost) * 100).toFixed(2) : '0.00'
 
   return {
+    betPerNumber,
+    returnPerHit,
     totalCost,
     totalReturn,
     profit,
+    roi,
   }
 }
 
@@ -46,18 +46,22 @@ function makeStrategies() {
     {
       key: 'all',
       label: '全部开奖号统计',
+      desc: '平码 + 特码全部统计',
     },
     {
       key: 'special',
       label: '只统计特码',
+      desc: '只看最后一个特码',
     },
     {
       key: 'specialWeight',
       label: '特码加权',
+      desc: '平码计1分，特码额外加3分',
     },
     {
       key: 'omitSpecial',
       label: '特码遗漏加权',
+      desc: '特码出现次数 + 遗漏期数加权',
     },
   ]
 
@@ -70,6 +74,7 @@ function makeStrategies() {
           id: `${mode.key}-${sampleSize}-${hotCount}`,
           mode: mode.key,
           modeLabel: mode.label,
+          desc: mode.desc,
           sampleSize,
           hotCount,
           coldCount: 36 - hotCount,
@@ -191,6 +196,7 @@ function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = [], h
       num: i,
       count: 0,
       scoreTotal: 0,
+      strategies: 0,
       type: 'hot',
     })
   }
@@ -203,12 +209,20 @@ function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = [], h
     const analysis = buildRecommend(beforeHistory, strategy)
 
     analysis.recommendNumbers.forEach((item) => {
-      const old = occurrenceMap.get(item.num)
+      const old = occurrenceMap.get(item.num) || {
+        num: item.num,
+        count: 0,
+        scoreTotal: 0,
+        strategies: 0,
+        type: 'hot',
+      }
 
       occurrenceMap.set(item.num, {
         ...old,
         count: old.count + 1,
         scoreTotal: old.scoreTotal + Number(item.count || 0),
+        strategies: old.strategies + 1,
+        type: 'hot',
       })
     })
   })
@@ -223,6 +237,7 @@ function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = [], h
     num: item.num,
     count: item.count,
     scoreTotal: Number(item.scoreTotal.toFixed(2)),
+    strategies: item.strategies,
     type: 'hot',
   }))
 
@@ -240,6 +255,7 @@ function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = [], h
       num: item.num,
       count: item.count,
       scoreTotal: Number(item.scoreTotal.toFixed(2)),
+      strategies: item.strategies,
       type: 'cold',
     }))
 
@@ -251,6 +267,8 @@ function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = [], h
     hotNumbers,
     coldNumbers,
     recommendNumbers,
+    sourceStrategyCount: usableStrategies.length,
+    totalCandidateCount: usableStrategies.length * 36,
   }
 }
 
@@ -335,11 +353,13 @@ function buildStrategyRanking(history) {
   const baseResults = strategies.map((strategy) => {
     const result100 = testStrategy(history, strategy, 100)
     const result50 = testStrategy(history, strategy, 50)
+    const result30 = testStrategy(history, strategy, 30)
 
     return {
       ...strategy,
       result100,
       result50,
+      result30,
       score: Number((result100.hitRate * 0.7 + result50.hitRate * 0.3).toFixed(2)),
     }
   })
@@ -356,27 +376,32 @@ function buildStrategyRanking(history) {
     {
       hotCount: 36,
       coldCount: 0,
-      label: '20档位综合｜前20档×36码｜出现率最高36码',
+      label: '20档位综合｜前20档 × 36码｜出现率最高36码',
+      desc: '取策略排行榜前20个档位，每个档位筛选36码，共720个号码，统计出现次数最高的前36个号码。',
     },
     {
       hotCount: 30,
       coldCount: 6,
-      label: '20档位综合｜30热+6冷｜前20档出现率',
+      label: '20档位综合｜30热 + 6冷｜前20档出现率',
+      desc: '取前20个档位共720个号码，选出现次数最高30个作为热码，再选出现次数最低6个作为冷码。',
     },
     {
       hotCount: 26,
       coldCount: 10,
-      label: '20档位综合｜26热+10冷｜前20档出现率',
+      label: '20档位综合｜26热 + 10冷｜前20档出现率',
+      desc: '取前20个档位共720个号码，选出现次数最高26个作为热码，再选出现次数最低10个作为冷码。',
     },
     {
       hotCount: 24,
       coldCount: 12,
-      label: '20档位综合｜24热+12冷｜前20档出现率',
+      label: '20档位综合｜24热 + 12冷｜前20档出现率',
+      desc: '取前20个档位共720个号码，选出现次数最高24个作为热码，再选出现次数最低12个作为冷码。',
     },
     {
       hotCount: 18,
       coldCount: 18,
-      label: '20档位综合｜18热+18冷｜前20档出现率',
+      label: '20档位综合｜18热 + 18冷｜前20档出现率',
+      desc: '取前20个档位共720个号码，选出现次数最高18个作为热码，再选出现次数最低18个作为冷码。',
     },
   ]
 
@@ -385,6 +410,7 @@ function buildStrategyRanking(history) {
       id: `aggregate-top20-${combo.hotCount}-${combo.coldCount}`,
       mode: 'aggregateTop20',
       modeLabel: `20档位综合 ${combo.hotCount}热+${combo.coldCount}冷`,
+      desc: combo.desc,
       sampleSize: 30,
       hotCount: combo.hotCount,
       coldCount: combo.coldCount,
@@ -394,11 +420,13 @@ function buildStrategyRanking(history) {
 
     const aggregateResult100 = testStrategy(history, aggregateStrategyBase, 100)
     const aggregateResult50 = testStrategy(history, aggregateStrategyBase, 50)
+    const aggregateResult30 = testStrategy(history, aggregateStrategyBase, 30)
 
     return {
       ...aggregateStrategyBase,
       result100: aggregateResult100,
       result50: aggregateResult50,
+      result30: aggregateResult30,
       score: Number((aggregateResult100.hitRate * 0.7 + aggregateResult50.hitRate * 0.3).toFixed(2)),
     }
   })
@@ -520,6 +548,10 @@ function buildTop20DrawStats(history, strategyRanking, rangeSize = 30) {
   }
 }
 
+function formatNumber(num) {
+  return String(num || '').padStart(2, '0')
+}
+
 export default function Top20StatsPage() {
   const [currentPlay, setCurrentPlay] = React.useState('macau')
   const [data, setData] = React.useState(null)
@@ -582,6 +614,14 @@ export default function Top20StatsPage() {
   }, [history, strategyRanking])
 
   const latest = history[0]
+  const finance100 = strategyRanking[0]
+    ? calculateProfit(
+        strategyRanking[0].result100.hitCount,
+        strategyRanking[0].result100.testedCount,
+        totalBetPerIssue,
+        odds
+      )
+    : null
 
   return (
     <main className="page">
@@ -799,14 +839,6 @@ export default function Top20StatsPage() {
           box-sizing: border-box;
         }
 
-        .back-link {
-          display: inline-flex;
-          margin-top: 14px;
-          color: #93c5fd;
-          text-decoration: none;
-          font-weight: 800;
-        }
-
         @media (max-width: 900px) {
           .hero {
             display: block;
@@ -822,12 +854,8 @@ export default function Top20StatsPage() {
         <div>
           <h1>20档位当期开奖统计</h1>
           <p className="desc">
-            独立页面：统计策略排行榜前20个档位，每个档位筛选36码后，是否命中当期最后的特码；并展示近30期中奖 / 不中奖明细。
+            独立页面：统计策略排行榜前20个档位，每个档位筛选36码后，是否命中当期特码；并展示近30期中奖 / 不中奖明细。
           </p>
-
-          <a className="back-link" href="/">
-            返回主筛选页面
-          </a>
 
           <div className="switch-row">
             <button
@@ -836,7 +864,6 @@ export default function Top20StatsPage() {
             >
               澳门玩法
             </button>
-
             <button
               className={`btn secondary ${currentPlay === 'hongkong' ? 'active' : ''}`}
               onClick={() => setCurrentPlay('hongkong')}
@@ -865,9 +892,8 @@ export default function Top20StatsPage() {
             <div className="card-title">
               {playConfig.name}｜第 {latest?.expect} 期当期开奖统计
             </div>
-
             <p className="desc">
-              当期最后特码：{formatNumber(top20DrawStats.latestSpecial)}。
+              当期特码：{formatNumber(top20DrawStats.latestSpecial)}。
               下面统计当前策略排行榜前20名档位，每个档位筛选36码后，是否命中当期最后的特码。
             </p>
 
@@ -876,17 +902,14 @@ export default function Top20StatsPage() {
                 <span>最新开奖期号</span>
                 <strong>第 {latest?.expect} 期</strong>
               </div>
-
               <div className="stat">
                 <span>开奖日期</span>
                 <strong>{latest?.openTime || '-'}</strong>
               </div>
-
               <div className="stat">
-                <span>当期最后特码</span>
+                <span>当期特码</span>
                 <strong>{formatNumber(top20DrawStats.latestSpecial)}</strong>
               </div>
-
               <div className="stat">
                 <span>前20名命中档位</span>
                 <strong>{top20DrawStats.hitRanks.length} 个</strong>
@@ -902,7 +925,6 @@ export default function Top20StatsPage() {
                   onChange={(e) => setTotalBetPerIssue(Number(e.target.value) || 0)}
                 />
               </div>
-
               <div className="stat">
                 <span>赔率</span>
                 <input
@@ -932,19 +954,34 @@ export default function Top20StatsPage() {
                   <tr>
                     <th>排名</th>
                     <th>档位策略</th>
-                    <th>当期最后特码</th>
+                    <th>当期特码</th>
                     <th>是否命中</th>
-                    <th>近100期命中</th>
-                    <th>近50期命中</th>
+                    <th>100期命中</th>
+                    <th>50期命中</th>
                     <th>100期盈亏</th>
+                    <th>50期盈亏</th>
+                    <th>30期盈亏</th>
                   </tr>
                 </thead>
-
                 <tbody>
                   {top20DrawStats.latestStats.map((item) => {
-                    const profit = calculateProfit(
+                    const profit100 = calculateProfit(
                       item.strategy.result100?.hitCount || 0,
                       item.strategy.result100?.testedCount || 0,
+                      totalBetPerIssue,
+                      odds
+                    )
+
+                    const profit50 = calculateProfit(
+                      item.strategy.result50?.hitCount || 0,
+                      item.strategy.result50?.testedCount || 0,
+                      totalBetPerIssue,
+                      odds
+                    )
+
+                    const profit30 = calculateProfit(
+                      item.strategy.result30?.hitCount || 0,
+                      item.strategy.result30?.testedCount || 0,
                       totalBetPerIssue,
                       odds
                     )
@@ -965,13 +1002,14 @@ export default function Top20StatsPage() {
                           {' '}
                           = {item.strategy.result50?.hitRate || 0}%
                         </td>
-                        <td
-                          style={{
-                            color: profit.profit >= 0 ? '#22c55e' : '#f87171',
-                            fontWeight: 900,
-                          }}
-                        >
-                          {formatMoney(profit.profit)}
+                        <td style={{ color: profit100.profit >= 0 ? '#22c55e' : '#f87171', fontWeight: 900 }}>
+                          {formatMoney(profit100.profit)}
+                        </td>
+                        <td style={{ color: profit50.profit >= 0 ? '#22c55e' : '#f87171', fontWeight: 900 }}>
+                          {formatMoney(profit50.profit)}
+                        </td>
+                        <td style={{ color: profit30.profit >= 0 ? '#22c55e' : '#f87171', fontWeight: 900 }}>
+                          {formatMoney(profit30.profit)}
                         </td>
                       </tr>
                     )
@@ -983,10 +1021,8 @@ export default function Top20StatsPage() {
 
           <section className="card">
             <div className="card-title">近30期前20名档位中奖 / 不中奖列表</div>
-
             <p className="desc">
-              每一行是一期开奖结果，每一列是当前策略排行榜前20名档位。
-              中 = 该档位36码命中当期最后特码；未中 = 没有命中。
+              每一行是一期开奖结果，每一列是当前策略排行榜前20名档位。中 = 该档位36码命中当期最后特码；未中 = 没有命中。
             </p>
 
             <div className="table-wrap">
@@ -994,7 +1030,7 @@ export default function Top20StatsPage() {
                 <thead>
                   <tr>
                     <th>日期 / 期数</th>
-                    <th>当期最后特码</th>
+                    <th>特码</th>
                     {top20DrawStats.latestStats.map((item) => (
                       <th key={`head-rank-${item.rank}`}>
                         第{item.rank}名
@@ -1002,13 +1038,11 @@ export default function Top20StatsPage() {
                     ))}
                   </tr>
                 </thead>
-
                 <tbody>
                   {top20DrawStats.recentRows.map((row) => (
                     <tr key={`recent-row-${row.expect}`}>
                       <td>{row.openTime} 第{row.expect}期</td>
                       <td>{formatNumber(row.specialNumber)}</td>
-
                       {row.cells.map((cell) => (
                         <td
                           key={`recent-cell-${row.expect}-${cell.rank}`}
