@@ -832,10 +832,8 @@ function testHeadStrategy(history, config, rangeSize) {
   }
 }
 
-function buildHeadStats(history) {
-  if (!history?.length) return []
-
-  const configs = [
+function getHeadConfigs() {
+  return [
     {
       id: 'head-30-3hot-1cold',
       title: '1. 30期｜3热 + 1冷',
@@ -917,8 +915,12 @@ function buildHeadStats(history) {
       omitHeadCount: 2,
     },
   ]
+}
 
-  return configs.map((config) => {
+function buildHeadStats(history) {
+  if (!history?.length) return []
+
+  return getHeadConfigs().map((config) => {
     const nextRecommend = buildHeadRecommendByConfig(history, config)
     const result100 = testHeadStrategy(history, config, 100)
     const result50 = testHeadStrategy(history, config, 50)
@@ -930,6 +932,55 @@ function buildHeadStats(history) {
       result100,
       result50,
       result30,
+    }
+  })
+}
+
+function buildHeadRecentRows(history, rangeSize = 20) {
+  if (!history?.length) return []
+
+  const configs = getHeadConfigs()
+
+  return history.slice(0, rangeSize).map((draw) => {
+    const numbers = draw.numbers || []
+    const specialNumber = numbers[numbers.length - 1]
+    const specialHead = getHeadNumber(specialNumber)
+    const targetIndex = history.findIndex(
+      (item) => String(item.expect) === String(draw.expect)
+    )
+    const beforeHistory = targetIndex >= 0 ? history.slice(targetIndex + 1) : []
+
+    const cells = configs.map((config) => {
+      if (beforeHistory.length < (config.minSampleSize || config.sampleSize || 30)) {
+        return {
+          id: config.id,
+          title: config.title,
+          hit: false,
+          status: '数据不足',
+          recommendHeads: [],
+        }
+      }
+
+      const analysis = buildHeadRecommendByConfig(beforeHistory, config)
+      const recommendHeads = analysis.recommendHeads || []
+      const recommendSet = new Set(recommendHeads.map((item) => item.head))
+      const hit = recommendSet.has(specialHead)
+
+      return {
+        id: config.id,
+        title: config.title,
+        hit,
+        status: hit ? '中' : '未中',
+        recommendHeads,
+      }
+    })
+
+    return {
+      expect: draw.expect,
+      openTime: draw.openTime,
+      specialNumber,
+      specialHead,
+      cells,
     }
   })
 }
@@ -1004,6 +1055,11 @@ export default function Top20StatsPage() {
   const headStats = React.useMemo(() => {
     if (!history.length) return []
     return buildHeadStats(history)
+  }, [history])
+
+  const headRecentRows = React.useMemo(() => {
+    if (!history.length) return []
+    return buildHeadRecentRows(history, 20)
   }, [history])
 
   const latest = history[0]
@@ -1201,6 +1257,21 @@ export default function Top20StatsPage() {
 
         .recent-table {
           min-width: 1500px;
+        }
+
+        .head-recent-table {
+          min-width: 1280px;
+        }
+
+        .head-recent-table .head-hit-cell {
+          background: rgba(250, 204, 21, 0.18);
+          color: #facc15;
+          font-weight: 900;
+        }
+
+        .head-recent-table .head-miss-cell {
+          color: #94a3b8;
+          font-weight: 800;
         }
 
         .hit-cell {
@@ -1512,6 +1583,50 @@ export default function Top20StatsPage() {
                       <td>
                         {item.result30.hitCount} / {item.result30.testedCount} = {item.result30.hitRate}%
                       </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-title">近20期头数方案中奖 / 不中奖列表</div>
+
+            <p className="desc">
+              每一行是一期开奖结果，只看当期最后特码头数；每一列是上面10个头数方案。
+              中 = 该方案预测头数包含当期最后特码头数；未中 = 没有包含。
+            </p>
+
+            <div className="table-wrap">
+              <table className="head-recent-table">
+                <thead>
+                  <tr>
+                    <th>日期 / 期数</th>
+                    <th>最后特码</th>
+                    <th>特码头数</th>
+                    {headStats.map((item) => (
+                      <th key={`head-recent-head-${item.id}`}>{item.title}</th>
+                    ))}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {headRecentRows.map((row) => (
+                    <tr key={`head-recent-row-${row.expect}`}>
+                      <td>{row.openTime} 第{row.expect}期</td>
+                      <td>{formatNumber(row.specialNumber)}</td>
+                      <td>{row.specialHead}头</td>
+
+                      {row.cells.map((cell) => (
+                        <td
+                          key={`head-recent-cell-${row.expect}-${cell.id}`}
+                          className={cell.hit ? 'head-hit-cell' : 'head-miss-cell'}
+                          title={`推荐：${cell.recommendHeads.map((headItem) => `${headItem.head}头`).join('、')}`}
+                        >
+                          {cell.status}
+                        </td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>
