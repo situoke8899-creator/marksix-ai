@@ -1188,6 +1188,19 @@ export default function Top20StatsPage() {
       )
     : null
 
+  async function copyAggregateHeads() {
+    const text = formatHeadCopyText(headAggregateStats?.nextRecommend?.recommendHeads || [])
+
+    if (!text) return
+
+    try {
+      await navigator.clipboard.writeText(text)
+      alert(`已复制预测头数：${text}`)
+    } catch (error) {
+      alert(`复制失败，请手动复制：${text}`)
+    }
+  }
+
   return (
     <main className="page">
       <style jsx>{`
@@ -1628,7 +1641,7 @@ export default function Top20StatsPage() {
                 </p>
 
                 <div className="aggregate-head-row">
-                  {headAggregateStats.nextRecommend.recommendHeads.map((item) => (
+                  {(headAggregateStats.nextRecommend?.recommendHeads || []).map((item) => (
                     <span key={`aggregate-head-${item.head}`} className="aggregate-head-chip">
                       {item.head}头｜出现{item.count}次
                     </span>
@@ -1642,7 +1655,7 @@ export default function Top20StatsPage() {
                 <div className="summary-grid">
                   <div className="stat">
                     <span>综合预测下一期头数</span>
-                    <strong>{formatHeadOnlyList(headAggregateStats.nextRecommend.recommendHeads)}</strong>
+                    <strong>{formatHeadOnlyList(headAggregateStats.nextRecommend?.recommendHeads || [])}</strong>
                   </div>
 
                   <div className="stat">
