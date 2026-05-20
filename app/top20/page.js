@@ -552,6 +552,203 @@ function formatNumber(num) {
   return String(num || '').padStart(2, '0')
 }
 
+
+function getHeadNumber(num) {
+  const n = Number(num)
+
+  if (!Number.isInteger(n) || n < 1 || n > 49) return ''
+
+  if (n <= 9) return 0
+  if (n <= 19) return 1
+  if (n <= 29) return 2
+  if (n <= 39) return 3
+  return 4
+}
+
+function buildHeadRecommend(beforeHistory, sampleSize = 30, hotHeadCount = 3, coldHeadCount = 1) {
+  const source = beforeHistory.slice(0, sampleSize)
+
+  const counts = {
+    0: 0,
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0,
+  }
+
+  source.forEach((item) => {
+    const numbers = item.numbers || []
+
+    numbers.forEach((num) => {
+      const head = getHeadNumber(num)
+
+      if (head !== '') {
+        counts[head] += 1
+      }
+    })
+  })
+
+  const ranking = Object.entries(counts).map(([head, count]) => ({
+    head: Number(head),
+    count,
+  }))
+
+  const hotHeads = [...ranking]
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count
+      return a.head - b.head
+    })
+    .slice(0, hotHeadCount)
+    .map((item) => ({
+      ...item,
+      type: 'hot',
+    }))
+
+  const hotSet = new Set(hotHeads.map((item) => item.head))
+
+  const coldHeads = [...ranking]
+    .filter((item) => !hotSet.has(item.head))
+    .sort((a, b) => {
+      if (a.count !== b.count) return a.count - b.count
+      return a.head - b.head
+    })
+    .slice(0, coldHeadCount)
+    .map((item) => ({
+      ...item,
+      type: 'cold',
+    }))
+
+  const recommendHeads = [...hotHeads, ...coldHeads].sort(
+    (a, b) => a.head - b.head
+  )
+
+  return {
+    counts,
+    hotHeads,
+    coldHeads,
+    recommendHeads,
+  }
+}
+
+function testHeadStrategy(history, sampleSize, hotHeadCount, coldHeadCount, rangeSize) {
+  const rows = []
+
+  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
+    const target = history[index]
+    const beforeHistory = history.slice(index + 1)
+
+    if (beforeHistory.length < sampleSize) continue
+
+    const analysis = buildHeadRecommend(beforeHistory, sampleSize, hotHeadCount, coldHeadCount)
+    const specialNumber = target.numbers[target.numbers.length - 1]
+    const specialHead = getHeadNumber(specialNumber)
+    const recommendSet = new Set(analysis.recommendHeads.map((item) => item.head))
+    const hit = recommendSet.has(specialHead)
+
+    rows.push({
+      expect: target.expect,
+      openTime: target.openTime,
+      specialNumber,
+      specialHead,
+      hit,
+      ...analysis,
+    })
+  }
+
+  const testedCount = rows.length
+  const hitCount = rows.filter((item) => item.hit).length
+  const hitRate = testedCount ? Number(((hitCount / testedCount) * 100).toFixed(2)) : 0
+
+  return {
+    testedCount,
+    hitCount,
+    hitRate,
+    rows,
+  }
+}
+
+function buildHeadStats(history) {
+  if (!history?.length) return []
+
+  const configs = [
+    {
+      id: 'head-30-3hot-1cold',
+      title: '30期头数｜3热 + 1冷',
+      sampleSize: 30,
+      hotHeadCount: 3,
+      coldHeadCount: 1,
+    },
+    {
+      id: 'head-30-2hot-2cold',
+      title: '30期头数｜2热 + 2冷',
+      sampleSize: 30,
+      hotHeadCount: 2,
+      coldHeadCount: 2,
+    },
+    {
+      id: 'head-50-3hot-1cold',
+      title: '50期头数｜3热 + 1冷',
+      sampleSize: 50,
+      hotHeadCount: 3,
+      coldHeadCount: 1,
+    },
+    {
+      id: 'head-50-2hot-2cold',
+      title: '50期头数｜2热 + 2冷',
+      sampleSize: 50,
+      hotHeadCount: 2,
+      coldHeadCount: 2,
+    },
+  ]
+
+  return configs.map((config) => {
+    const nextRecommend = buildHeadRecommend(
+      history,
+      config.sampleSize,
+      config.hotHeadCount,
+      config.coldHeadCount
+    )
+
+    const result100 = testHeadStrategy(
+      history,
+      config.sampleSize,
+      config.hotHeadCount,
+      config.coldHeadCount,
+      100
+    )
+
+    const result50 = testHeadStrategy(
+      history,
+      config.sampleSize,
+      config.hotHeadCount,
+      config.coldHeadCount,
+      50
+    )
+
+    const result30 = testHeadStrategy(
+      history,
+      config.sampleSize,
+      config.hotHeadCount,
+      config.coldHeadCount,
+      30
+    )
+
+    return {
+      ...config,
+      nextRecommend,
+      result100,
+      result50,
+      result30,
+    }
+  })
+}
+
+function formatHeadList(list) {
+  return (list || [])
+    .map((item) => `${item.head}头(${item.count})`)
+    .join('、')
+}
+
 export default function Top20StatsPage() {
   const [currentPlay, setCurrentPlay] = React.useState('macau')
   const [data, setData] = React.useState(null)
@@ -612,6 +809,11 @@ export default function Top20StatsPage() {
     if (!history.length || !strategyRanking.length) return null
     return buildTop20DrawStats(history, strategyRanking, 30)
   }, [history, strategyRanking])
+
+  const headStats = React.useMemo(() => {
+    if (!history.length) return []
+    return buildHeadStats(history)
+  }, [history])
 
   const latest = history[0]
   const finance100 = strategyRanking[0]
@@ -1014,6 +1216,101 @@ export default function Top20StatsPage() {
                       </tr>
                     )
                   })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-title">30期 / 50期开奖号码头数预测统计</div>
+
+            <p className="desc">
+              头数规则：01-09 = 0头，10-19 = 1头，20-29 = 2头，30-39 = 3头，40-49 = 4头。
+              系统分别抓取最近30期、50期的全部开奖号码头数，预测下一期最后特码会落在哪些头数里，并回测近100期、50期、30期命中率。
+            </p>
+
+            <div className="head-grid">
+              {headStats.map((item) => (
+                <div key={item.id} className="head-card">
+                  <div className="head-card-title">{item.title}</div>
+
+                  <div className="desc">
+                    推荐头数：
+                    {item.nextRecommend.recommendHeads.map((headItem) => `${headItem.head}头`).join('、')}
+                  </div>
+
+                  <div className="head-chip-list">
+                    {item.nextRecommend.hotHeads.map((headItem) => (
+                      <span key={`${item.id}-hot-${headItem.head}`} className="head-chip hot">
+                        热：{headItem.head}头 / {headItem.count}次
+                      </span>
+                    ))}
+
+                    {item.nextRecommend.coldHeads.map((headItem) => (
+                      <span key={`${item.id}-cold-${headItem.head}`} className="head-chip cold">
+                        冷：{headItem.head}头 / {headItem.count}次
+                      </span>
+                    ))}
+                  </div>
+
+                  <div className="summary-grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+                    <div className="stat">
+                      <span>近100期命中</span>
+                      <strong>
+                        {item.result100.hitCount} / {item.result100.testedCount} = {item.result100.hitRate}%
+                      </strong>
+                    </div>
+
+                    <div className="stat">
+                      <span>近50期命中</span>
+                      <strong>
+                        {item.result50.hitCount} / {item.result50.testedCount} = {item.result50.hitRate}%
+                      </strong>
+                    </div>
+
+                    <div className="stat">
+                      <span>近30期命中</span>
+                      <strong>
+                        {item.result30.hitCount} / {item.result30.testedCount} = {item.result30.hitRate}%
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>方案</th>
+                    <th>热头数</th>
+                    <th>冷头数</th>
+                    <th>推荐头数</th>
+                    <th>近100期命中</th>
+                    <th>近50期命中</th>
+                    <th>近30期命中</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {headStats.map((item) => (
+                    <tr key={`head-row-${item.id}`}>
+                      <td>{item.title}</td>
+                      <td>{formatHeadList(item.nextRecommend.hotHeads)}</td>
+                      <td>{formatHeadList(item.nextRecommend.coldHeads)}</td>
+                      <td>{item.nextRecommend.recommendHeads.map((headItem) => `${headItem.head}头`).join('、')}</td>
+                      <td>
+                        {item.result100.hitCount} / {item.result100.testedCount} = {item.result100.hitRate}%
+                      </td>
+                      <td>
+                        {item.result50.hitCount} / {item.result50.testedCount} = {item.result50.hitRate}%
+                      </td>
+                      <td>
+                        {item.result30.hitCount} / {item.result30.testedCount} = {item.result30.hitRate}%
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
