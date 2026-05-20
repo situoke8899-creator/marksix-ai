@@ -985,6 +985,117 @@ function buildHeadRecentRows(history, rangeSize = 20) {
   })
 }
 
+
+function buildHeadAggregateTop4(history) {
+  if (!history?.length) return null
+
+  const configs = getHeadConfigs()
+  const headMap = new Map()
+
+  for (let head = 0; head <= 4; head++) {
+    headMap.set(head, {
+      head,
+      count: 0,
+      scoreTotal: 0,
+      sourceTitles: [],
+    })
+  }
+
+  configs.forEach((config) => {
+    if (history.length < (config.minSampleSize || config.sampleSize || 30)) return
+
+    const analysis = buildHeadRecommendByConfig(history, config)
+
+    ;(analysis.recommendHeads || []).forEach((item) => {
+      const old = headMap.get(item.head) || {
+        head: item.head,
+        count: 0,
+        scoreTotal: 0,
+        sourceTitles: [],
+      }
+
+      headMap.set(item.head, {
+        ...old,
+        count: old.count + 1,
+        scoreTotal: old.scoreTotal + Number(item.count || 0),
+        sourceTitles: [...old.sourceTitles, config.title],
+      })
+    })
+  })
+
+  const ranking = Array.from(headMap.values()).sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count
+    if (b.scoreTotal !== a.scoreTotal) return b.scoreTotal - a.scoreTotal
+    return a.head - b.head
+  })
+
+  return {
+    ranking,
+    recommendHeads: ranking.slice(0, 4),
+    sourceCount: configs.length,
+  }
+}
+
+function testHeadAggregateTop4(history, rangeSize) {
+  const rows = []
+
+  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
+    const target = history[index]
+    const beforeHistory = history.slice(index + 1)
+
+    if (beforeHistory.length < 50) continue
+
+    const analysis = buildHeadAggregateTop4(beforeHistory)
+    const specialNumber = target.numbers[target.numbers.length - 1]
+    const specialHead = getHeadNumber(specialNumber)
+    const recommendSet = new Set((analysis?.recommendHeads || []).map((item) => item.head))
+    const hit = recommendSet.has(specialHead)
+
+    rows.push({
+      expect: target.expect,
+      openTime: target.openTime,
+      specialNumber,
+      specialHead,
+      hit,
+      recommendHeads: analysis?.recommendHeads || [],
+    })
+  }
+
+  const testedCount = rows.length
+  const hitCount = rows.filter((item) => item.hit).length
+  const hitRate = testedCount ? Number(((hitCount / testedCount) * 100).toFixed(2)) : 0
+
+  return {
+    testedCount,
+    hitCount,
+    hitRate,
+    rows,
+  }
+}
+
+function buildHeadAggregateStats(history) {
+  if (!history?.length) return null
+
+  return {
+    nextRecommend: buildHeadAggregateTop4(history),
+    result50: testHeadAggregateTop4(history, 50),
+    result30: testHeadAggregateTop4(history, 30),
+  }
+}
+
+function formatHeadOnlyList(list) {
+  return (list || [])
+    .map((item) => `${item.head}头`)
+    .join('、')
+}
+
+function formatHeadCopyText(list) {
+  return (list || [])
+    .map((item) => `${item.head}头`)
+    .join(' ')
+}
+
+
 function formatHeadList(list) {
   return (list || [])
     .map((item) => `${item.head}头(${item.count})`)
@@ -1060,6 +1171,11 @@ export default function Top20StatsPage() {
   const headRecentRows = React.useMemo(() => {
     if (!history.length) return []
     return buildHeadRecentRows(history, 20)
+  }, [history])
+
+  const headAggregateStats = React.useMemo(() => {
+    if (!history.length) return null
+    return buildHeadAggregateStats(history)
   }, [history])
 
   const latest = history[0]
@@ -1488,7 +1604,7 @@ export default function Top20StatsPage() {
 
             <p className="desc">
               头数规则：01-09 = 0头，10-19 = 1头，20-29 = 2头，30-39 = 3头，40-49 = 4头。
-              这里只统计每期开奖最后一个特码的头数，不统计前6个正码。系统会显示本期最后特码头数，并用下面10组方案预测下一期可能出现的头数。
+              这里只统计每期开奖最后一个特码的头数，不统计前6个正码。系统会显示本期最后特码头数，并用10组方案预测下一期可能出现的头数，同时综合10个方案取出现最多的4个头数。
             </p>
 
             <div className="summary-grid">
@@ -1503,55 +1619,53 @@ export default function Top20StatsPage() {
             </div>
 
 
-            <div className="head-grid">
-              {headStats.map((item) => (
-                <div key={item.id} className="head-card">
-                  <div className="head-card-title">{item.title}</div>
+            {headAggregateStats && (
+              <div className="aggregate-box">
+                <div className="card-title">10个头数档位综合｜出现最多的4个头数</div>
 
-                  <div className="desc">
-                    推荐头数：
-                    {item.nextRecommend.recommendHeads.map((headItem) => `${headItem.head}头`).join('、')}
+                <p className="desc">
+                  计算方式：先抓取上面10个头数方案各自预测的头数，再统计0头到4头在10个方案里出现的次数，取出现最多的4个头数作为下一期综合预测。
+                </p>
+
+                <div className="aggregate-head-row">
+                  {headAggregateStats.nextRecommend.recommendHeads.map((item) => (
+                    <span key={`aggregate-head-${item.head}`} className="aggregate-head-chip">
+                      {item.head}头｜出现{item.count}次
+                    </span>
+                  ))}
+                </div>
+
+                <button className="copy-btn" onClick={copyAggregateHeads}>
+                  复制综合预测头数
+                </button>
+
+                <div className="summary-grid">
+                  <div className="stat">
+                    <span>综合预测下一期头数</span>
+                    <strong>{formatHeadOnlyList(headAggregateStats.nextRecommend.recommendHeads)}</strong>
                   </div>
 
-                  <div className="head-chip-list">
-                    {item.nextRecommend.hotHeads.map((headItem) => (
-                      <span key={`${item.id}-hot-${headItem.head}`} className="head-chip hot">
-                        热：{headItem.head}头 / {headItem.count}次
-                      </span>
-                    ))}
-
-                    {item.nextRecommend.coldHeads.map((headItem) => (
-                      <span key={`${item.id}-cold-${headItem.head}`} className="head-chip cold">
-                        冷：{headItem.head}头 / {headItem.count}次
-                      </span>
-                    ))}
+                  <div className="stat">
+                    <span>近50期综合命中</span>
+                    <strong>
+                      {headAggregateStats.result50.hitCount} / {headAggregateStats.result50.testedCount} = {headAggregateStats.result50.hitRate}%
+                    </strong>
                   </div>
 
-                  <div className="summary-grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
-                    <div className="stat">
-                      <span>近100期命中</span>
-                      <strong>
-                        {item.result100.hitCount} / {item.result100.testedCount} = {item.result100.hitRate}%
-                      </strong>
-                    </div>
+                  <div className="stat">
+                    <span>近30期综合命中</span>
+                    <strong>
+                      {headAggregateStats.result30.hitCount} / {headAggregateStats.result30.testedCount} = {headAggregateStats.result30.hitRate}%
+                    </strong>
+                  </div>
 
-                    <div className="stat">
-                      <span>近50期命中</span>
-                      <strong>
-                        {item.result50.hitCount} / {item.result50.testedCount} = {item.result50.hitRate}%
-                      </strong>
-                    </div>
-
-                    <div className="stat">
-                      <span>近30期命中</span>
-                      <strong>
-                        {item.result30.hitCount} / {item.result30.testedCount} = {item.result30.hitRate}%
-                      </strong>
-                    </div>
+                  <div className="stat">
+                    <span>统计来源</span>
+                    <strong>10个头数方案</strong>
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
 
             <div className="table-wrap">
               <table>
