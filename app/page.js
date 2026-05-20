@@ -764,6 +764,81 @@ function buildSingleBacktest(history, targetExpect, strategy) {
   }
 }
 
+
+function getShortStrategyLabel(strategy) {
+  if (!strategy) return ''
+
+  if (strategy.mode === 'aggregateTop20') {
+    return `${strategy.hotCount}热+${strategy.coldCount}冷`
+  }
+
+  return strategy.label
+    .replace('全部开奖号统计｜', '全开｜')
+    .replace('只统计特码｜', '特码｜')
+    .replace('特码加权｜', '加权｜')
+    .replace('特码遗漏加权｜', '遗漏｜')
+    .replace('前', '前')
+}
+
+function buildTop20DrawStats(history, strategyRanking, rangeSize = 30) {
+  if (!history?.length || !strategyRanking?.length) return null
+
+  const top20 = strategyRanking.slice(0, 20)
+  const latest = history[0]
+  const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
+
+  const latestStats = top20.map((strategy, index) => {
+    const result = buildSingleBacktest(history, latest.expect, strategy)
+
+    return {
+      rank: index + 1,
+      strategy,
+      label: getShortStrategyLabel(strategy),
+      expect: latest.expect,
+      openTime: latest.openTime,
+      specialNumber: latestSpecial,
+      hit: Boolean(result?.hit),
+      hotHit: Boolean(result?.hotHit),
+      coldHit: Boolean(result?.coldHit),
+      status: result?.hotHit ? '热码命中' : result?.coldHit ? '冷码命中' : result?.hit ? '命中' : '未中',
+    }
+  })
+
+  const hitRanks = latestStats.filter((item) => item.hit)
+
+  const recentRows = history.slice(0, rangeSize).map((draw) => {
+    const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
+
+    const cells = top20.map((strategy, index) => {
+      const result = buildSingleBacktest(history, draw.expect, strategy)
+
+      return {
+        rank: index + 1,
+        strategy,
+        hit: Boolean(result?.hit),
+        hotHit: Boolean(result?.hotHit),
+        coldHit: Boolean(result?.coldHit),
+        status: result?.hotHit ? '热中' : result?.coldHit ? '冷中' : result?.hit ? '中' : '未中',
+      }
+    })
+
+    return {
+      expect: draw.expect,
+      openTime: draw.openTime,
+      specialNumber,
+      cells,
+    }
+  })
+
+  return {
+    latest,
+    latestSpecial,
+    latestStats,
+    hitRanks,
+    recentRows,
+  }
+}
+
 function copyToClipboard(text) {
   if (!text) {
     alert('没有可复制的号码')
@@ -919,6 +994,11 @@ export default function Page() {
     selectedExpect,
     currentStrategy
   )
+
+  const top20DrawStats = React.useMemo(() => {
+    if (!history.length || !strategyRanking.length) return null
+    return buildTop20DrawStats(history, strategyRanking, 30)
+  }, [history, strategyRanking])
 
   const nextAnalysis =
     currentStrategy && history.length
@@ -1158,6 +1238,113 @@ export default function Page() {
           color: #111827;
           font-weight: 700;
         }
+
+        .top20-stat-box {
+          margin-top: 18px;
+          padding: 16px;
+          border: 2px solid #ef4444;
+          border-radius: 14px;
+          background: rgba(15, 23, 42, 0.92);
+        }
+
+        .top20-stat-title {
+          color: #ffffff;
+          font-size: 18px;
+          font-weight: 900;
+          margin-bottom: 8px;
+        }
+
+        .top20-stat-desc {
+          color: #cbd5e1;
+          font-size: 13px;
+          line-height: 1.6;
+          margin-bottom: 14px;
+        }
+
+        .hit-rank-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          margin: 12px 0 16px;
+        }
+
+        .hit-rank-chip {
+          padding: 8px 12px;
+          border-radius: 999px;
+          background: #facc15;
+          color: #111827;
+          font-size: 13px;
+          font-weight: 900;
+        }
+
+        .no-hit-chip {
+          padding: 8px 12px;
+          border-radius: 999px;
+          background: #374151;
+          color: #e5e7eb;
+          font-size: 13px;
+          font-weight: 800;
+        }
+
+        .top20-table-wrap {
+          width: 100%;
+          overflow-x: auto;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          border-radius: 12px;
+          margin-top: 12px;
+          background: #0f172a;
+        }
+
+        .top20-table {
+          width: max-content;
+          min-width: 980px;
+          border-collapse: collapse;
+          color: #ffffff;
+          font-size: 13px;
+        }
+
+        .top20-table th,
+        .top20-table td {
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          padding: 9px 10px;
+          text-align: center;
+          white-space: nowrap;
+        }
+
+        .top20-table th {
+          background: rgba(255, 255, 255, 0.08);
+          color: #f8fafc;
+          font-weight: 900;
+        }
+
+        .top20-table .left-cell {
+          text-align: left;
+        }
+
+        .status-hit {
+          color: #facc15;
+          font-weight: 900;
+        }
+
+        .status-miss {
+          color: #94a3b8;
+          font-weight: 800;
+        }
+
+        .recent30-table {
+          min-width: 1420px;
+        }
+
+        .recent30-table .hit-cell {
+          background: rgba(250, 204, 21, 0.18);
+          color: #facc15;
+          font-weight: 900;
+        }
+
+        .recent30-table .miss-cell {
+          color: #94a3b8;
+          font-weight: 800;
+        }
       `}</style>
 
       <section className="hero">
@@ -1252,6 +1439,95 @@ export default function Page() {
                   </div>
                 )}
               </div>
+
+              {top20DrawStats && (
+                <div className="top20-stat-box">
+                  <div className="top20-stat-title">
+                    20个档位当期开奖统计：第 {top20DrawStats.latest?.expect} 期
+                  </div>
+                  <div className="top20-stat-desc">
+                    当期开奖号码特码：{String(top20DrawStats.latestSpecial || '').padStart(2, '0')}。
+                    下面统计策略排行榜前20名，每个档位筛选36码后，是否命中当期特码。
+                  </div>
+
+                  <div className="hit-rank-list">
+                    {top20DrawStats.hitRanks.length ? (
+                      top20DrawStats.hitRanks.map((item) => (
+                        <div key={`hit-rank-${item.rank}`} className="hit-rank-chip">
+                          第{item.rank}名：{item.status}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="no-hit-chip">当期前20名档位暂无命中</div>
+                    )}
+                  </div>
+
+                  <div className="top20-table-wrap">
+                    <table className="top20-table">
+                      <thead>
+                        <tr>
+                          <th>排名</th>
+                          <th>档位策略</th>
+                          <th>当期特码</th>
+                          <th>是否命中</th>
+                          <th>100期命中率</th>
+                          <th>50期命中率</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {top20DrawStats.latestStats.map((item) => (
+                          <tr key={`latest-stat-${item.rank}`}>
+                            <td>第{item.rank}名</td>
+                            <td className="left-cell">{item.label}</td>
+                            <td>{String(item.specialNumber || '').padStart(2, '0')}</td>
+                            <td className={item.hit ? 'status-hit' : 'status-miss'}>{item.status}</td>
+                            <td>{item.strategy.result100?.hitRate || 0}%</td>
+                            <td>{item.strategy.result50?.hitRate || 0}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="top20-stat-title" style={{ marginTop: '18px' }}>
+                    近30期前20名档位中奖 / 不中奖明细
+                  </div>
+                  <div className="top20-stat-desc">
+                    每一行是一期开奖结果，每一列是当前策略排行榜前20名档位。中 = 该档位36码命中当期特码；未中 = 没有命中。
+                  </div>
+
+                  <div className="top20-table-wrap">
+                    <table className="top20-table recent30-table">
+                      <thead>
+                        <tr>
+                          <th>日期 / 期数</th>
+                          <th>特码</th>
+                          {top20DrawStats.latestStats.map((item) => (
+                            <th key={`head-rank-${item.rank}`}>第{item.rank}名</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {top20DrawStats.recentRows.map((row) => (
+                          <tr key={`recent-row-${row.expect}`}>
+                            <td>{row.openTime} 第{row.expect}期</td>
+                            <td>{String(row.specialNumber || '').padStart(2, '0')}</td>
+                            {row.cells.map((cell) => (
+                              <td
+                                key={`recent-cell-${row.expect}-${cell.rank}`}
+                                className={cell.hit ? 'hit-cell' : 'miss-cell'}
+                                title={cell.strategy.label}
+                              >
+                                {cell.hit ? cell.status : '未中'}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               <div className="ball-grid recommend-grid">
                 {nextRecommendNumbers.map((item) => (
