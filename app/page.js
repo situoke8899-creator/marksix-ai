@@ -991,60 +991,117 @@ export default function Page() {
         return
       }
 
-      const latestStats = top20.map((strategy, index) => {
-        const result = buildSingleBacktest(history, latest.expect, strategy)
+      const rankingCache = new Map()
+
+      function getHistoricalRanking(draw) {
+        const key = String(draw.expect)
+
+        if (rankingCache.has(key)) {
+          return rankingCache.get(key)
+        }
+
+        const targetIndex = history.findIndex(
+          (item) => String(item.expect) === String(draw.expect)
+        )
+
+        const beforeHistory = targetIndex >= 0 ? history.slice(targetIndex + 1) : []
+
+        if (!beforeHistory.length) {
+          rankingCache.set(key, [])
+          return []
+        }
+
+        const ranking = buildStrategyRanking(beforeHistory)
+        rankingCache.set(key, ranking)
+        return ranking
+      }
+
+      function getHistoricalStrategy(draw, homepageStrategy) {
+        const ranking = getHistoricalRanking(draw)
+
+        if (!ranking.length) return homepageStrategy
+
+        return (
+          ranking.find((item) => item.id === homepageStrategy.id) ||
+          homepageStrategy
+        )
+      }
+
+      function makeCell(draw, homepageStrategy, index) {
+        const historicalStrategyForDraw = getHistoricalStrategy(draw, homepageStrategy)
+        const result = buildSingleBacktest(history, draw.expect, historicalStrategyForDraw)
 
         return {
           rank: index + 1,
-          label: strategy.label,
-          strategyId: strategy.id,
-          modeLabel: strategy.modeLabel,
-          expect: latest.expect,
-          openTime: latest.openTime,
-          specialNumber: latest.numbers?.[latest.numbers.length - 1],
+
+          // 显示：固定等于首页下拉框里的第几名
+          label: homepageStrategy.label,
+          strategyId: homepageStrategy.id,
+          modeLabel: homepageStrategy.modeLabel,
+
+          // 计算：用该期开奖之前的数据里同一个 strategy.id 的策略
+          usedStrategyId: historicalStrategyForDraw.id,
+          usedStrategyLabel: historicalStrategyForDraw.label,
+
+          expect: draw.expect,
+          openTime: draw.openTime,
+          specialNumber: draw.numbers?.[draw.numbers.length - 1],
           hit: Boolean(result?.hit),
           hotHit: Boolean(result?.hotHit),
           coldHit: Boolean(result?.coldHit),
           status: result?.hotHit ? '热码命中' : result?.coldHit ? '冷码命中' : result?.hit ? '命中' : '未中',
           shortStatus: result?.hotHit ? '热中' : result?.coldHit ? '冷中' : result?.hit ? '中' : '未中',
           strategy: {
-            id: strategy.id,
-            label: strategy.label,
-            modeLabel: strategy.modeLabel,
-            hotCount: strategy.hotCount,
-            coldCount: strategy.coldCount,
-            result100: strategy.result100
+            id: homepageStrategy.id,
+            label: homepageStrategy.label,
+            modeLabel: homepageStrategy.modeLabel,
+            hotCount: homepageStrategy.hotCount,
+            coldCount: homepageStrategy.coldCount,
+            result100: homepageStrategy.result100
               ? {
-                  hitCount: strategy.result100.hitCount,
-                  testedCount: strategy.result100.testedCount,
-                  hitRate: strategy.result100.hitRate,
+                  hitCount: homepageStrategy.result100.hitCount,
+                  testedCount: homepageStrategy.result100.testedCount,
+                  hitRate: homepageStrategy.result100.hitRate,
                 }
               : null,
-            result50: strategy.result50
+            result50: homepageStrategy.result50
               ? {
-                  hitCount: strategy.result50.hitCount,
-                  testedCount: strategy.result50.testedCount,
-                  hitRate: strategy.result50.hitRate,
+                  hitCount: homepageStrategy.result50.hitCount,
+                  testedCount: homepageStrategy.result50.testedCount,
+                  hitRate: homepageStrategy.result50.hitRate,
+                }
+              : null,
+            result30: homepageStrategy.result30
+              ? {
+                  hitCount: homepageStrategy.result30.hitCount,
+                  testedCount: homepageStrategy.result30.testedCount,
+                  hitRate: homepageStrategy.result30.hitRate,
                 }
               : null,
           },
         }
-      })
+      }
+
+      const latestStats = top20.map((homepageStrategy, index) => (
+        makeCell(latest, homepageStrategy, index)
+      ))
 
       const recentRows = history.slice(0, 30).map((draw) => {
         const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
 
-        const cells = top20.map((strategy, index) => {
-          const result = buildSingleBacktest(history, draw.expect, strategy)
+        const cells = top20.map((homepageStrategy, index) => {
+          const cell = makeCell(draw, homepageStrategy, index)
 
           return {
-            rank: index + 1,
-            strategyId: strategy.id,
-            strategyLabel: strategy.label,
-            hit: Boolean(result?.hit),
-            hotHit: Boolean(result?.hotHit),
-            coldHit: Boolean(result?.coldHit),
-            status: result?.hotHit ? '热中' : result?.coldHit ? '冷中' : result?.hit ? '中' : '未中',
+            rank: cell.rank,
+            strategyId: cell.strategyId,
+            strategyLabel: cell.label,
+            usedStrategyId: cell.usedStrategyId,
+            usedStrategyLabel: cell.usedStrategyLabel,
+            hit: cell.hit,
+            hotHit: cell.hotHit,
+            coldHit: cell.coldHit,
+            status: cell.shortStatus,
           }
         })
 
@@ -1057,7 +1114,7 @@ export default function Page() {
       })
 
       const snapshot = {
-        version: 'home-sync-v8-click-snapshot',
+        version: 'home-sync-v9-fixed-id-result30',
         play: currentPlay,
         generatedAt: Date.now(),
         latest,
