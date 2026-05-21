@@ -1168,7 +1168,7 @@ export default function Top20StatsPage() {
 
       const parsed = JSON.parse(raw)
 
-      if (parsed?.play === currentPlay && parsed?.version === 'home-sync-v7-fixed-rank-historical-id') {
+      if (parsed?.play === currentPlay && parsed?.version === 'home-sync-v8-click-snapshot') {
         setHomeSnapshot(parsed)
       } else {
         setHomeSnapshot(null)
@@ -1800,9 +1800,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V7固定首页排名+历史计算版】</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V8首页点击同步版】</div>
             <p className="desc">
-              【V7固定首页排名+历史计算版已生效】列顺序完全等于首页下拉框第1-20名；每一期中/未中按该期开奖之前的数据和相同策略ID计算。
+              【V8首页点击同步版已生效】本表直接显示你从首页点击按钮时保存的20档位数据；/top20 不再自己重新计算。
             </p>
 
             <div className="table-wrap">
