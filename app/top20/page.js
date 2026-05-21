@@ -1111,6 +1111,7 @@ export default function Top20StatsPage() {
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
   const [totalBetPerIssue, setTotalBetPerIssue] = React.useState(3600)
+  const [odds, setOdds] = React.useState(47)
   const [homeSnapshot, setHomeSnapshot] = React.useState(null)
 
   const playConfig = PLAY_CONFIG[currentPlay]
