@@ -1168,7 +1168,7 @@ export default function Top20StatsPage() {
 
       const parsed = JSON.parse(raw)
 
-      if (parsed?.play === currentPlay && parsed?.version === 'home-sync-v2-historical-row') {
+      if (parsed?.play === currentPlay && parsed?.version === 'home-sync-v7-fixed-rank-historical-id') {
         setHomeSnapshot(parsed)
       } else {
         setHomeSnapshot(null)
@@ -1800,9 +1800,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V6首页历史结果同步版】</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V7固定首页排名+历史计算版】</div>
             <p className="desc">
-              【V6首页历史结果同步版已生效】本表直接读取首页按每期开奖前数据计算好的中/未中结果；不会在 /top20 重新筛选。
+              【V7固定首页排名+历史计算版已生效】列顺序完全等于首页下拉框第1-20名；每一期中/未中按该期开奖之前的数据和相同策略ID计算。
             </p>
 
             <div className="table-wrap">
@@ -1827,7 +1827,7 @@ export default function Top20StatsPage() {
                         <td
                           key={`recent-cell-${row.expect}-${cell.rank}`}
                           className={cell.hit ? 'hit-cell' : 'miss-cell'}
-                          title={cell.strategyLabel || cell.strategy?.label || ''}
+                          title={`首页策略：${cell.strategyLabel || cell.strategy?.label || ''}；当期计算策略：${cell.usedStrategyLabel || cell.strategyLabel || cell.strategy?.label || ''}`}
                         >
                           {cell.hit ? cell.status : '未中'}
                         </td>
