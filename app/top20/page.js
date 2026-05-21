@@ -1168,7 +1168,7 @@ export default function Top20StatsPage() {
 
       const parsed = JSON.parse(raw)
 
-      if (parsed?.play === currentPlay && parsed?.version === 'home-sync-v9-fixed-id-result30') {
+      if (parsed?.play === currentPlay && parsed?.version === 'home-sync-v10-first-column-detail-table') {
         setHomeSnapshot(parsed)
       } else {
         setHomeSnapshot(null)
@@ -1800,9 +1800,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V9首页同ID历史计算版】</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V10第一列同步近100明细版】</div>
             <p className="desc">
-              【V9首页同ID历史计算版已生效】列顺序来自首页下拉框；每期中/未中用该期开奖前数据里相同策略ID计算；30期盈亏已修复。
+              【V10第一列同步近100明细版已生效】第1列直接同步首页近100期回测明细；其它列按首页下拉框策略计算；30期盈亏已修复。
             </p>
 
             <div className="table-wrap">
