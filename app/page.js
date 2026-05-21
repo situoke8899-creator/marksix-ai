@@ -1036,14 +1036,14 @@ export default function Page() {
   ].join('\n')
 
   const detailBacktest100 = React.useMemo(() => {
-    if (!history.length || !historicalStrategy) return null
-    return buildFixedStrategyBacktestResult(history, historicalStrategy, 100)
-  }, [history, historicalStrategy])
+    if (!history.length || !currentStrategy) return null
+    return buildFixedStrategyBacktestResult(history, currentStrategy, 100)
+  }, [history, currentStrategy])
 
   const detailBacktest50 = React.useMemo(() => {
-    if (!history.length || !historicalStrategy) return null
-    return buildFixedStrategyBacktestResult(history, historicalStrategy, 50)
-  }, [history, historicalStrategy])
+    if (!history.length || !currentStrategy) return null
+    return buildFixedStrategyBacktestResult(history, currentStrategy, 50)
+  }, [history, currentStrategy])
 
   const best100Rows = detailBacktest100?.rows || []
   const best50Rows = detailBacktest50?.rows || []
@@ -1671,7 +1671,7 @@ export default function Page() {
               <div>
                 <div className="card-title">选择历史回测期号</div>
                 <p className="section-desc">
-                  这里是历史回测，不是下一期推荐。选择某一期，系统只会使用该期之前的数据生成36码，不会把该期开奖号码提前放进去；下面近100期明细也会按这个历史策略逐期重新生成36码。
+                  这里是历史回测，不是下一期推荐。选择某一期，系统只会使用该期之前的数据生成36码，不会把该期开奖号码提前放进去；下方近100期明细则按当前选择策略逐期回测。
                 </p>
               </div>
             </div>
@@ -1964,7 +1964,7 @@ export default function Page() {
               <DetailBacktestTable title="近50期回测明细" rows={best50Rows} limit={50} />
 
               <div className="footer-note">
-                回测逻辑：上方单期与下方近100期/50期明细，都会使用开奖之前的数据生成36码。绿色圈表示前6个平码落入36码；黄色圈表示最后特码落入36码。金额回测只按特码命中计算。
+                回测逻辑：上方单期历史回测只使用该期之前的数据；下方近100期/50期明细按当前选择策略逐期生成36码。绿色圈表示前6个平码落入36码；黄色圈表示最后特码落入36码。金额回测只按特码命中计算。
               </div>
             </>
           )}
