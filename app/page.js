@@ -2,22 +2,257 @@
 
 import React from 'react'
 
+const redWave = [1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46]
+const blueWave = [3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48]
+const greenWave = [5, 6, 11, 16, 17, 21, 22, 27, 28, 32, 33, 38, 39, 43, 44, 49]
+
 const PLAY_CONFIG = {
   macau: {
     key: 'macau',
     name: '澳门',
+    badge: '澳门六合彩特码多策略回测',
     api: '/api/history?play=macau',
   },
   hongkong: {
     key: 'hongkong',
     name: '香港',
+    badge: '香港六合彩特码多策略回测',
     api: '/api/history?play=hongkong',
   },
+}
+
+function getWave(num) {
+  if (redWave.includes(Number(num))) return 'red'
+  if (blueWave.includes(Number(num))) return 'blue'
+  return 'green'
+}
+
+function getWaveText(num) {
+  if (redWave.includes(Number(num))) return '红'
+  if (blueWave.includes(Number(num))) return '蓝'
+  return '绿'
+}
+
+function getZodiac(num, openTime) {
+  const n = Number(num)
+  const date = String(openTime || '')
+  const year = Number(date.slice(0, 4)) || new Date().getFullYear()
+
+  // 2026年对应：01/13/25/37/49 = 马，然后按号码分组顺序排列。
+  const baseYear = 2026
+  const baseZodiacs = ['马', '蛇', '龙', '兔', '虎', '牛', '鼠', '猪', '狗', '鸡', '猴', '羊']
+  const offset = ((year - baseYear) % 12 + 12) % 12
+  const zodiacs = baseZodiacs.map((_, index) => baseZodiacs[(index - offset + 12) % 12])
+
+  const groups = [
+    [1, 13, 25, 37, 49],
+    [2, 14, 26, 38],
+    [3, 15, 27, 39],
+    [4, 16, 28, 40],
+    [5, 17, 29, 41],
+    [6, 18, 30, 42],
+    [7, 19, 31, 43],
+    [8, 20, 32, 44],
+    [9, 21, 33, 45],
+    [10, 22, 34, 46],
+    [11, 23, 35, 47],
+    [12, 24, 36, 48],
+  ]
+
+  const index = groups.findIndex((nums) => nums.includes(n))
+  return index >= 0 ? zodiacs[index] : ''
+}
+
+function getOddEven(num) {
+  return Number(num) % 2 === 0 ? '双' : '单'
+}
+
+function getBigSmall(num) {
+  return Number(num) >= 25 ? '大' : '小'
+}
+
+function digitSum(num) {
+  return String(Number(num) || 0)
+    .split('')
+    .reduce((total, item) => total + Number(item), 0)
+}
+
+function getSumOddEven(num) {
+  return digitSum(num) % 2 === 0 ? '合双' : '合单'
+}
+
+function getSumBigSmall(num) {
+  return digitSum(num) >= 7 ? '合大' : '合小'
+}
+
+function getTailBigSmall(num) {
+  const tail = Number(String(num).slice(-1))
+  return tail >= 5 ? '尾大' : '尾小'
+}
+
+function getDetailRecord(item) {
+  const numbers = item?.numbers || []
+  const specialNumber = item?.specialNumber || numbers[numbers.length - 1]
+  const sum = numbers.reduce((total, num) => total + Number(num), 0)
+
+  const numbersDetail = numbers.map((num, index) => ({
+    num,
+    zodiac: getZodiac(num, item.openTime),
+    wave: getWaveText(num),
+    isSpecial: index === numbers.length - 1,
+  }))
+
+  return {
+    ...item,
+    numbersDetail,
+    specialNumber,
+    specialDetail: numbersDetail[numbersDetail.length - 1],
+    sum,
+    sumOddEven: sum % 2 === 0 ? '双' : '单',
+    sumBigSmall: sum >= 175 ? '大' : '小',
+    specialOddEven: getOddEven(specialNumber),
+    specialBigSmall: getBigSmall(specialNumber),
+    specialSumOddEven: getSumOddEven(specialNumber),
+    specialSumBigSmall: getSumBigSmall(specialNumber),
+    specialTailBigSmall: getTailBigSmall(specialNumber),
+  }
+}
+
+function DetailNumber({ detail, hit = false, hitType = 'normal' }) {
+  const num = Number(detail?.num)
+  const wave = getWave(num)
+  const outlineColor = hit ? (hitType === 'special' ? '#facc15' : '#fde68a') : undefined
+
+  return (
+    <span className="detail-number">
+      <span
+        className={`mini-ball ${wave}`}
+        style={
+          hit
+            ? {
+                outline: `3px solid ${outlineColor}`,
+                boxShadow: `0 0 10px ${outlineColor}`,
+              }
+            : undefined
+        }
+      >
+        {String(num).padStart(2, '0')}
+      </span>
+      <span className="mini-zodiac">{detail?.zodiac || getZodiac(num)}</span>
+    </span>
+  )
+}
+
+function DetailBacktestTable({ title, rows, limit = 100 }) {
+  return (
+    <section className="card">
+      <div className="card-title">{title}</div>
+      <p className="section-desc">
+        表格按开奖站样式展示，号码显示波色与生肖。每一行都会使用该期之前的数据重新生成36码；黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
+      </p>
+
+      <div className="detail-table-wrap">
+        <table className="detail-table">
+          <thead>
+            <tr>
+              <th rowSpan="2">日期/期数</th>
+              <th rowSpan="2">正码</th>
+              <th rowSpan="2">特码</th>
+              <th colSpan="4">总和</th>
+              <th colSpan="5">特码</th>
+              <th rowSpan="2">命中结果</th>
+            </tr>
+            <tr>
+              <th>总数</th>
+              <th>单双</th>
+              <th>大小</th>
+              <th>七色波</th>
+              <th>单双</th>
+              <th>大小</th>
+              <th>合单双</th>
+              <th>合大小</th>
+              <th>尾大小</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.slice(0, limit).map((rawItem) => {
+              const item = getDetailRecord(rawItem)
+              const recommendSet = new Set(item.recommendNumbers?.map((n) => n.num))
+              const normalDetails = item.numbersDetail.slice(0, 6)
+              const specialDetail = item.numbersDetail[6]
+              const specialHit = recommendSet.has(item.specialNumber)
+
+              return (
+                <tr key={item.expect}>
+                  <td className="issue-cell">
+                    <strong>{item.openTime || '-'}</strong>
+                    <span>第 {item.expect} 期</span>
+                  </td>
+
+                  <td className="numbers-cell">
+                    {normalDetails.map((detail, index) => (
+                      <DetailNumber
+                        key={`${item.expect}-${detail.num}-${index}`}
+                        detail={detail}
+                        hit={recommendSet.has(detail.num)}
+                        hitType="normal"
+                      />
+                    ))}
+                  </td>
+
+                  <td className="special-cell">
+                    <DetailNumber
+                      detail={specialDetail}
+                      hit={specialHit}
+                      hitType="special"
+                    />
+                  </td>
+
+                  <td>{item.sum}</td>
+                  <td className={item.sumOddEven === '双' ? 'red-text' : ''}>{item.sumOddEven}</td>
+                  <td className={item.sumBigSmall === '大' ? 'red-text' : ''}>{item.sumBigSmall}</td>
+                  <td className={`${getWave(item.specialNumber)}-text`}>{getWaveText(item.specialNumber)}</td>
+                  <td className={item.specialOddEven === '双' ? 'red-text' : ''}>{item.specialOddEven}</td>
+                  <td className={item.specialBigSmall === '大' ? 'red-text' : ''}>{item.specialBigSmall}</td>
+                  <td className={item.specialSumOddEven === '合双' ? 'red-text' : ''}>{item.specialSumOddEven}</td>
+                  <td className={item.specialSumBigSmall === '合大' ? 'red-text' : ''}>{item.specialSumBigSmall}</td>
+                  <td className={item.specialTailBigSmall === '尾大' ? 'red-text' : ''}>{item.specialTailBigSmall}</td>
+
+                  <td className={item.hit ? 'hit-text' : 'miss-text'}>
+                    特码 {String(item.specialNumber).padStart(2, '0')}：
+                    {item.hotHit ? '热码命中' : item.coldHit ? '冷码命中' : '未命中'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
 }
 
 function formatMoney(value) {
   const num = Number(value || 0)
   return `¥${num.toFixed(2)}`
+}
+
+
+function getNextExpectByPlay(history, data, currentPlay) {
+  if (data?.nextExpect) return data.nextExpect
+  if (!history?.[0]?.expect) return ''
+
+  const latestExpect = String(history[0].expect)
+
+  if (currentPlay === 'macau') {
+    const num = Number(latestExpect)
+    if (!Number.isNaN(num)) return String(num + 1)
+    return latestExpect
+  }
+
+  // 香港不是每天开奖，最好由后端返回 nextExpect。
+  return '等待下期开奖'
 }
 
 function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 47) {
@@ -36,6 +271,68 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
     profit,
     roi,
   }
+}
+
+function Ball({ num, count, type, small = false, hit = false, hitType = 'special' }) {
+  const wave = getWave(Number(num))
+
+ const outlineColor = hit
+  ? hitType === 'normal'
+    ? '#fde68a'
+    : '#facc15'
+  : undefined
+  return (
+    <div className={`ball-box ${small ? 'small' : ''}`}>
+      <div
+        className={`ball ${wave}`}
+        style={
+          hit
+            ? {
+                outline: `4px solid ${outlineColor}`,
+                boxShadow: `0 0 18px ${outlineColor}`,
+              }
+            : undefined
+        }
+      >
+        {String(num).padStart(2, '0')}
+      </div>
+
+      {typeof count === 'number' && (
+        <div className="ball-count">{count}分</div>
+      )}
+
+      {type && (
+        <div className={`ball-type ${type}`}>
+          {type === 'hot' ? '热' : '冷'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+function PlaySwitch({ currentPlay, onChange }) {
+  return (
+    <div className="play-switch">
+      <button
+        type="button"
+        className={`play-box macau ${currentPlay === 'macau' ? 'active' : ''}`}
+        onClick={() => onChange('macau')}
+        title="点击进入澳门玩法"
+      >
+        澳门玩法
+      </button>
+
+      <button
+        type="button"
+        className={`play-box hongkong ${currentPlay === 'hongkong' ? 'active' : ''}`}
+        onClick={() => onChange('hongkong')}
+        title="点击进入香港玩法"
+      >
+        香港玩法
+      </button>
+    </div>
+  )
 }
 
 function makeStrategies() {
@@ -188,6 +485,7 @@ function buildRecommend(beforeHistory, strategy) {
   }
 }
 
+
 function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = [], hotCount = 36, coldCount = 0) {
   const occurrenceMap = new Map()
 
@@ -274,12 +572,7 @@ function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = [], h
 
 function buildRecommendByStrategy(beforeHistory, strategy) {
   if (strategy?.mode === 'aggregateTop20') {
-    return buildTop20AggregateRecommend(
-      beforeHistory,
-      strategy.aggregateStrategies || [],
-      strategy.hotCount || 36,
-      strategy.coldCount || 0
-    )
+    return buildTop20AggregateRecommend(beforeHistory, strategy.aggregateStrategies || [], strategy.hotCount || 36, strategy.coldCount || 0)
   }
 
   return buildRecommend(beforeHistory, strategy)
@@ -353,13 +646,11 @@ function buildStrategyRanking(history) {
   const baseResults = strategies.map((strategy) => {
     const result100 = testStrategy(history, strategy, 100)
     const result50 = testStrategy(history, strategy, 50)
-    const result30 = testStrategy(history, strategy, 30)
 
     return {
       ...strategy,
       result100,
       result50,
-      result30,
       score: Number((result100.hitRate * 0.7 + result50.hitRate * 0.3).toFixed(2)),
     }
   })
@@ -420,13 +711,11 @@ function buildStrategyRanking(history) {
 
     const aggregateResult100 = testStrategy(history, aggregateStrategyBase, 100)
     const aggregateResult50 = testStrategy(history, aggregateStrategyBase, 50)
-    const aggregateResult30 = testStrategy(history, aggregateStrategyBase, 30)
 
     return {
       ...aggregateStrategyBase,
       result100: aggregateResult100,
       result50: aggregateResult50,
-      result30: aggregateResult30,
       score: Number((aggregateResult100.hitRate * 0.7 + aggregateResult50.hitRate * 0.3).toFixed(2)),
     }
   })
@@ -475,666 +764,143 @@ function buildSingleBacktest(history, targetExpect, strategy) {
   }
 }
 
-function getShortStrategyLabel(strategy) {
-  if (!strategy) return ''
 
-  if (strategy.mode === 'aggregateTop20') {
-    return `${strategy.hotCount}热+${strategy.coldCount}冷`
-  }
-
-  return strategy.label
-    .replace('全部开奖号统计｜', '全开｜')
-    .replace('只统计特码｜', '特码｜')
-    .replace('特码加权｜', '加权｜')
-    .replace('特码遗漏加权｜', '遗漏｜')
-}
-
-function buildTop20DrawStats(history, strategyRanking, rangeSize = 30) {
-  if (!history?.length) return null
-
-  const latest = history[0]
-  const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
-
-  const latestBeforeHistory = history.slice(1)
-  const latestHistoricalRanking = latestBeforeHistory.length
-    ? buildStrategyRanking(latestBeforeHistory)
-    : strategyRanking
-
-  const latestTop20 = (latestHistoricalRanking || []).slice(0, 20)
-
-  const latestStats = latestTop20.map((strategy, index) => {
-    const result = buildSingleBacktest(history, latest.expect, strategy)
-
-    return {
-      rank: index + 1,
-      strategy,
-      label: getShortStrategyLabel(strategy),
-      expect: latest.expect,
-      openTime: latest.openTime,
-      specialNumber: latestSpecial,
-      hit: Boolean(result?.hit),
-      hotHit: Boolean(result?.hotHit),
-      coldHit: Boolean(result?.coldHit),
-      status: result?.hotHit ? '热码命中' : result?.coldHit ? '冷码命中' : result?.hit ? '命中' : '未中',
-    }
-  })
-
-  const hitRanks = latestStats.filter((item) => item.hit)
-
-  const recentRows = history.slice(0, rangeSize).map((draw) => {
-    const targetIndex = history.findIndex(
-      (item) => String(item.expect) === String(draw.expect)
-    )
-
-    const beforeHistory = targetIndex >= 0 ? history.slice(targetIndex + 1) : []
-    const historicalRanking = beforeHistory.length
-      ? buildStrategyRanking(beforeHistory)
-      : strategyRanking
-
-    const rowTop20 = (historicalRanking || []).slice(0, 20)
-    const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
-
-    const cells = rowTop20.map((strategy, index) => {
-      const result = buildSingleBacktest(history, draw.expect, strategy)
-
-      return {
-        rank: index + 1,
-        strategy,
-        strategyLabel: getShortStrategyLabel(strategy),
-        hit: Boolean(result?.hit),
-        hotHit: Boolean(result?.hotHit),
-        coldHit: Boolean(result?.coldHit),
-        status: result?.hotHit ? '热中' : result?.coldHit ? '冷中' : result?.hit ? '中' : '未中',
-      }
-    })
-
-    return {
-      expect: draw.expect,
-      openTime: draw.openTime,
-      specialNumber,
-      cells,
-    }
-  })
-
-  return {
-    latest,
-    latestSpecial,
-    latestStats,
-    hitRanks,
-    recentRows,
-  }
-}
-
-function formatNumber(num) {
-  return String(num || '').padStart(2, '0')
-}
-
-
-function getHeadNumber(num) {
-  const n = Number(num)
-
-  if (!Number.isInteger(n) || n < 1 || n > 49) return ''
-
-  if (n <= 9) return 0
-  if (n <= 19) return 1
-  if (n <= 29) return 2
-  if (n <= 39) return 3
-  return 4
-}
-
-function makeEmptyHeadCounts() {
-  return {
-    0: 0,
-    1: 0,
-    2: 0,
-    3: 0,
-    4: 0,
-  }
-}
-
-function buildSpecialHeadRanking(beforeHistory, sampleSize = 30) {
-  const source = beforeHistory.slice(0, sampleSize)
-  const counts = makeEmptyHeadCounts()
-
-  source.forEach((item) => {
-    const numbers = item.numbers || []
-    const specialNumber = numbers[numbers.length - 1]
-    const head = getHeadNumber(specialNumber)
-
-    if (head !== '') {
-      counts[head] += 1
-    }
-  })
-
-  const ranking = Object.entries(counts).map(([head, count]) => ({
-    head: Number(head),
-    count,
-  }))
-
-  const hotRanking = [...ranking].sort((a, b) => {
-    if (b.count !== a.count) return b.count - a.count
-    return a.head - b.head
-  })
-
-  const coldRanking = [...ranking].sort((a, b) => {
-    if (a.count !== b.count) return a.count - b.count
-    return a.head - b.head
-  })
-
-  return {
-    counts,
-    ranking,
-    hotRanking,
-    coldRanking,
-  }
-}
-
-function buildHeadRecommend(beforeHistory, sampleSize = 30, hotHeadCount = 3, coldHeadCount = 1) {
-  const rankingData = buildSpecialHeadRanking(beforeHistory, sampleSize)
-
-  const hotHeads = rankingData.hotRanking
-    .slice(0, hotHeadCount)
-    .map((item) => ({
-      ...item,
-      type: 'hot',
-    }))
-
-  const hotSet = new Set(hotHeads.map((item) => item.head))
-
-  const coldHeads = rankingData.coldRanking
-    .filter((item) => !hotSet.has(item.head))
-    .slice(0, coldHeadCount)
-    .map((item) => ({
-      ...item,
-      type: 'cold',
-    }))
-
-  const recommendHeads = [...hotHeads, ...coldHeads].sort(
-    (a, b) => a.head - b.head
-  )
-
-  return {
-    counts: rankingData.counts,
-    hotHeads,
-    coldHeads,
-    recommendHeads,
-  }
-}
-
-function getOmissionRanking(beforeHistory) {
-  const omissionMap = new Map()
-
-  for (let head = 0; head <= 4; head++) {
-    omissionMap.set(head, {
-      head,
-      omit: beforeHistory.length,
-      count: 0,
-      type: 'cold',
-    })
-  }
-
-  beforeHistory.forEach((item, index) => {
-    const numbers = item.numbers || []
-    const specialNumber = numbers[numbers.length - 1]
-    const head = getHeadNumber(specialNumber)
-
-    if (head === '') return
-
-    const old = omissionMap.get(head)
-
-    omissionMap.set(head, {
-      ...old,
-      count: old.count + 1,
-      omit: old.omit === beforeHistory.length ? index : old.omit,
-    })
-  })
-
-  return Array.from(omissionMap.values()).sort((a, b) => {
-    if (b.omit !== a.omit) return b.omit - a.omit
-    return a.count - b.count
-  })
-}
-
-function uniqueHeadItems(items) {
-  const map = new Map()
-
-  items.forEach((item) => {
-    if (!item || item.head === undefined || item.head === '') return
-
-    if (!map.has(item.head)) {
-      map.set(item.head, item)
-    }
-  })
-
-  return Array.from(map.values()).sort((a, b) => a.head - b.head)
-}
-
-function buildHeadRecommendByConfig(beforeHistory, config) {
-  if (config.kind === 'hotCold') {
-    return buildHeadRecommend(
-      beforeHistory,
-      config.sampleSize,
-      config.hotHeadCount,
-      config.coldHeadCount
-    )
-  }
-
-  if (config.kind === 'hotHotMix') {
-    const rank30 = buildSpecialHeadRanking(beforeHistory, 30)
-    const rank50 = buildSpecialHeadRanking(beforeHistory, 50)
-
-    const hot30 = rank30.hotRanking.slice(0, 2).map((item) => ({
-      ...item,
-      type: 'hot',
-      source: '30期热',
-    }))
-
-    const hot50 = rank50.hotRanking.slice(0, 2).map((item) => ({
-      ...item,
-      type: 'hot',
-      source: '50期热',
-    }))
-
-    const hotHeads = uniqueHeadItems([...hot30, ...hot50])
-
-    return {
-      counts: rank30.counts,
-      hotHeads,
-      coldHeads: [],
-      recommendHeads: hotHeads,
-    }
-  }
-
-  if (config.kind === 'hotColdMix') {
-    const rank30 = buildSpecialHeadRanking(beforeHistory, 30)
-    const rank50 = buildSpecialHeadRanking(beforeHistory, 50)
-
-    const hot30 = rank30.hotRanking.slice(0, 2).map((item) => ({
-      ...item,
-      type: 'hot',
-      source: '30期热',
-    }))
-
-    const hotSet = new Set(hot30.map((item) => item.head))
-
-    const cold50 = rank50.coldRanking
-      .filter((item) => !hotSet.has(item.head))
-      .slice(0, 2)
-      .map((item) => ({
-        ...item,
-        type: 'cold',
-        source: '50期冷',
-      }))
-
-    const hotHeads = uniqueHeadItems(hot30)
-    const coldHeads = uniqueHeadItems(cold50)
-
-    return {
-      counts: rank30.counts,
-      hotHeads,
-      coldHeads,
-      recommendHeads: uniqueHeadItems([...hotHeads, ...coldHeads]),
-    }
-  }
-
-  if (config.kind === 'hotOmit') {
-    const rank30 = buildSpecialHeadRanking(beforeHistory, 30)
-
-    const hotHeads = rank30.hotRanking.slice(0, 2).map((item) => ({
-      ...item,
-      type: 'hot',
-      source: '30期热',
-    }))
-
-    const hotSet = new Set(hotHeads.map((item) => item.head))
-
-    const omissionHeads = getOmissionRanking(beforeHistory)
-      .filter((item) => !hotSet.has(item.head))
-      .slice(0, config.omitHeadCount)
-      .map((item) => ({
-        head: item.head,
-        count: item.omit,
-        omit: item.omit,
-        type: 'cold',
-        source: '最大遗漏',
-      }))
-
-    const coldHeads = uniqueHeadItems(omissionHeads)
-
-    return {
-      counts: rank30.counts,
-      hotHeads,
-      coldHeads,
-      recommendHeads: uniqueHeadItems([...hotHeads, ...coldHeads]),
-    }
-  }
-
-  return buildHeadRecommend(beforeHistory, 30, 3, 1)
-}
-
-function testHeadStrategy(history, config, rangeSize) {
+function buildFixedStrategyBacktestResult(history, strategy, rangeSize = 100) {
   const rows = []
+
+  if (!history?.length || !strategy) {
+    return {
+      testedCount: 0,
+      hitCount: 0,
+      hotHitCount: 0,
+      coldHitCount: 0,
+      hitRate: 0,
+      hotHitRate: 0,
+      coldHitRate: 0,
+      rows,
+    }
+  }
 
   for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
     const target = history[index]
     const beforeHistory = history.slice(index + 1)
 
-    if (beforeHistory.length < (config.minSampleSize || config.sampleSize || 30)) continue
+    if (beforeHistory.length < getRequiredSampleSize(strategy)) continue
 
-    const analysis = buildHeadRecommendByConfig(beforeHistory, config)
+    const analysis = buildRecommendByStrategy(beforeHistory, strategy)
     const specialNumber = target.numbers[target.numbers.length - 1]
-    const specialHead = getHeadNumber(specialNumber)
-    const recommendSet = new Set(analysis.recommendHeads.map((item) => item.head))
-    const hit = recommendSet.has(specialHead)
+
+    const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
+    const hotSet = new Set(analysis.hotNumbers.map((item) => item.num))
+    const coldSet = new Set(analysis.coldNumbers.map((item) => item.num))
+
+    const hit = recommendSet.has(specialNumber)
+    const hotHit = hotSet.has(specialNumber)
+    const coldHit = coldSet.has(specialNumber)
 
     rows.push({
       expect: target.expect,
       openTime: target.openTime,
+      numbers: target.numbers,
       specialNumber,
-      specialHead,
       hit,
+      hotHit,
+      coldHit,
       ...analysis,
     })
   }
 
   const testedCount = rows.length
   const hitCount = rows.filter((item) => item.hit).length
+  const hotHitCount = rows.filter((item) => item.hotHit).length
+  const coldHitCount = rows.filter((item) => item.coldHit).length
+
   const hitRate = testedCount ? Number(((hitCount / testedCount) * 100).toFixed(2)) : 0
+  const hotHitRate = testedCount ? Number(((hotHitCount / testedCount) * 100).toFixed(2)) : 0
+  const coldHitRate = testedCount ? Number(((coldHitCount / testedCount) * 100).toFixed(2)) : 0
 
   return {
     testedCount,
     hitCount,
+    hotHitCount,
+    coldHitCount,
     hitRate,
+    hotHitRate,
+    coldHitRate,
     rows,
   }
 }
 
-function getHeadConfigs() {
-  return [
-    {
-      id: 'head-30-3hot-1cold',
-      title: '1. 30期｜3热 + 1冷',
-      kind: 'hotCold',
-      sampleSize: 30,
-      minSampleSize: 30,
-      hotHeadCount: 3,
-      coldHeadCount: 1,
-    },
-    {
-      id: 'head-30-2hot-2cold',
-      title: '2. 30期｜2热 + 2冷',
-      kind: 'hotCold',
-      sampleSize: 30,
-      minSampleSize: 30,
-      hotHeadCount: 2,
-      coldHeadCount: 2,
-    },
-    {
-      id: 'head-30-2hot-1cold',
-      title: '3. 30期｜2热 + 1冷',
-      kind: 'hotCold',
-      sampleSize: 30,
-      minSampleSize: 30,
-      hotHeadCount: 2,
-      coldHeadCount: 1,
-    },
-    {
-      id: 'head-50-3hot-1cold',
-      title: '4. 50期｜3热 + 1冷',
-      kind: 'hotCold',
-      sampleSize: 50,
-      minSampleSize: 50,
-      hotHeadCount: 3,
-      coldHeadCount: 1,
-    },
-    {
-      id: 'head-50-2hot-2cold',
-      title: '5. 50期｜2热 + 2冷',
-      kind: 'hotCold',
-      sampleSize: 50,
-      minSampleSize: 50,
-      hotHeadCount: 2,
-      coldHeadCount: 2,
-    },
-    {
-      id: 'head-50-2hot-1cold',
-      title: '6. 50期｜2热 + 1冷',
-      kind: 'hotCold',
-      sampleSize: 50,
-      minSampleSize: 50,
-      hotHeadCount: 2,
-      coldHeadCount: 1,
-    },
-    {
-      id: 'head-30hot2-50hot2',
-      title: '7. 30期热2头 + 50期热2头',
-      kind: 'hotHotMix',
-      minSampleSize: 50,
-    },
-    {
-      id: 'head-30hot2-50cold2',
-      title: '8. 30期热2头 + 50期冷2头',
-      kind: 'hotColdMix',
-      minSampleSize: 50,
-    },
-    {
-      id: 'head-hot2-omit1',
-      title: '9. 热2头 + 最大遗漏1头',
-      kind: 'hotOmit',
-      minSampleSize: 30,
-      omitHeadCount: 1,
-    },
-    {
-      id: 'head-hot2-omit2',
-      title: '10. 热2头 + 最大遗漏2头',
-      kind: 'hotOmit',
-      minSampleSize: 30,
-      omitHeadCount: 2,
-    },
-  ]
-}
-
-function buildHeadStats(history) {
-  if (!history?.length) return []
-
-  return getHeadConfigs().map((config) => {
-    const nextRecommend = buildHeadRecommendByConfig(history, config)
-    const result100 = testHeadStrategy(history, config, 100)
-    const result50 = testHeadStrategy(history, config, 50)
-    const result30 = testHeadStrategy(history, config, 30)
-
-    return {
-      ...config,
-      nextRecommend,
-      result100,
-      result50,
-      result30,
-    }
-  })
-}
-
-function buildHeadRecentRows(history, rangeSize = 20) {
-  if (!history?.length) return []
-
-  const configs = getHeadConfigs()
-
-  return history.slice(0, rangeSize).map((draw) => {
-    const numbers = draw.numbers || []
-    const specialNumber = numbers[numbers.length - 1]
-    const specialHead = getHeadNumber(specialNumber)
-    const targetIndex = history.findIndex(
-      (item) => String(item.expect) === String(draw.expect)
-    )
-    const beforeHistory = targetIndex >= 0 ? history.slice(targetIndex + 1) : []
-
-    const cells = configs.map((config) => {
-      if (beforeHistory.length < (config.minSampleSize || config.sampleSize || 30)) {
-        return {
-          id: config.id,
-          title: config.title,
-          hit: false,
-          status: '数据不足',
-          recommendHeads: [],
-        }
-      }
-
-      const analysis = buildHeadRecommendByConfig(beforeHistory, config)
-      const recommendHeads = analysis.recommendHeads || []
-      const recommendSet = new Set(recommendHeads.map((item) => item.head))
-      const hit = recommendSet.has(specialHead)
-
-      return {
-        id: config.id,
-        title: config.title,
-        hit,
-        status: hit ? '中' : '未中',
-        recommendHeads,
-      }
-    })
-
-    return {
-      expect: draw.expect,
-      openTime: draw.openTime,
-      specialNumber,
-      specialHead,
-      cells,
-    }
-  })
-}
-
-
-function buildHeadAggregateTop4(history) {
-  if (!history?.length) return null
-
-  const configs = getHeadConfigs()
-  const headMap = new Map()
-
-  for (let head = 0; head <= 4; head++) {
-    headMap.set(head, {
-      head,
-      count: 0,
-      scoreTotal: 0,
-      sourceTitles: [],
-    })
+function copyToClipboard(text) {
+  if (!text) {
+    alert('没有可复制的号码')
+    return
   }
 
-  configs.forEach((config) => {
-    if (history.length < (config.minSampleSize || config.sampleSize || 30)) return
-
-    const analysis = buildHeadRecommendByConfig(history, config)
-
-    ;(analysis.recommendHeads || []).forEach((item) => {
-      const old = headMap.get(item.head) || {
-        head: item.head,
-        count: 0,
-        scoreTotal: 0,
-        sourceTitles: [],
-      }
-
-      headMap.set(item.head, {
-        ...old,
-        count: old.count + 1,
-        scoreTotal: old.scoreTotal + Number(item.count || 0),
-        sourceTitles: [...old.sourceTitles, config.title],
-      })
-    })
-  })
-
-  const ranking = Array.from(headMap.values()).sort((a, b) => {
-    if (b.count !== a.count) return b.count - a.count
-    if (b.scoreTotal !== a.scoreTotal) return b.scoreTotal - a.scoreTotal
-    return a.head - b.head
-  })
-
-  return {
-    ranking,
-    recommendHeads: ranking.slice(0, 4),
-    sourceCount: configs.length,
-  }
-}
-
-function testHeadAggregateTop4(history, rangeSize) {
-  const rows = []
-
-  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
-    const target = history[index]
-    const beforeHistory = history.slice(index + 1)
-
-    if (beforeHistory.length < 50) continue
-
-    const analysis = buildHeadAggregateTop4(beforeHistory)
-    const specialNumber = target.numbers[target.numbers.length - 1]
-    const specialHead = getHeadNumber(specialNumber)
-    const recommendSet = new Set((analysis?.recommendHeads || []).map((item) => item.head))
-    const hit = recommendSet.has(specialHead)
-
-    rows.push({
-      expect: target.expect,
-      openTime: target.openTime,
-      specialNumber,
-      specialHead,
-      hit,
-      recommendHeads: analysis?.recommendHeads || [],
-    })
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text)
+    alert('已复制：' + text)
+    return
   }
 
-  const testedCount = rows.length
-  const hitCount = rows.filter((item) => item.hit).length
-  const hitRate = testedCount ? Number(((hitCount / testedCount) * 100).toFixed(2)) : 0
-
-  return {
-    testedCount,
-    hitCount,
-    hitRate,
-    rows,
-  }
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
+  alert('已复制：' + text)
 }
 
-function buildHeadAggregateStats(history) {
-  if (!history?.length) return null
-
-  return {
-    nextRecommend: buildHeadAggregateTop4(history),
-    result50: testHeadAggregateTop4(history, 50),
-    result30: testHeadAggregateTop4(history, 30),
-  }
-}
-
-function formatHeadOnlyList(list) {
-  return (list || [])
-    .map((item) => `${item.head}头`)
-    .join('、')
-}
-
-function formatHeadCopyText(list) {
-  return (list || [])
-    .map((item) => `${item.head}头`)
+function formatNumbers(list) {
+  return list
+    .map((item) => String(item.num).padStart(2, '0'))
     .join(' ')
 }
 
-
-function formatHeadList(list) {
-  return (list || [])
-    .map((item) => `${item.head}头(${item.count})`)
-    .join('、')
+function CopyButton({ label, text }) {
+  return (
+    <button
+      className="refresh-btn"
+      style={{
+        padding: '10px 16px',
+        borderRadius: '14px',
+        fontSize: '14px',
+      }}
+      onClick={() => copyToClipboard(text)}
+    >
+      {label}
+    </button>
+  )
 }
 
-export default function Top20StatsPage() {
-  const [currentPlay, setCurrentPlay] = React.useState('macau')
+export default function Page() {
+  const [currentPlay, setCurrentPlay] = React.useState(() => {
+    if (typeof window === 'undefined') return 'macau'
+
+    const params = new URLSearchParams(window.location.search)
+    const play = params.get('play')
+
+    return play === 'hongkong' ? 'hongkong' : 'macau'
+  })
   const [data, setData] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
+  const [selectedExpect, setSelectedExpect] = React.useState('')
+  const [selectedStrategyId, setSelectedStrategyId] = React.useState('auto')
+  const [filter, setFilter] = React.useState('all')
   const [totalBetPerIssue, setTotalBetPerIssue] = React.useState(3600)
   const [odds, setOdds] = React.useState(47)
 
   const playConfig = PLAY_CONFIG[currentPlay]
-  const history = data?.history || []
 
-  const loadData = React.useCallback(async () => {
+  const loadData = async () => {
     try {
       setLoading(true)
       setError('')
-      setData(null)
 
       const res = await fetch(playConfig.api, {
         cache: 'no-store',
@@ -1143,7 +909,7 @@ export default function Top20StatsPage() {
       const text = await res.text()
 
       if (!text || !text.trim()) {
-        throw new Error(`${playConfig.name}接口返回空内容`)
+        throw new Error(`${playConfig.name}接口返回空内容，请检查 app/api/history/route.js`)
       }
 
       let json
@@ -1151,672 +917,1057 @@ export default function Top20StatsPage() {
       try {
         json = JSON.parse(text)
       } catch (error) {
-        throw new Error(`${playConfig.name}接口返回不是JSON`)
+        console.log(`${playConfig.name}接口原始返回内容：`, text)
+        throw new Error(`${playConfig.name}接口返回的不是JSON，请检查 app/api/history/route.js`)
       }
 
       if (!json.ok) {
-        throw new Error(json.message || `${playConfig.name}数据获取失败`)
+        throw new Error(json.message || '数据获取失败')
       }
 
       setData(json)
+
+      if (json.history?.[0]?.expect) {
+        setSelectedExpect(json.history[0].expect)
+      }
     } catch (err) {
       setError(err.message || '数据获取失败')
     } finally {
       setLoading(false)
     }
-  }, [playConfig.api, playConfig.name])
+  }
+
+  const changePlay = (play) => {
+    if (!PLAY_CONFIG[play]) return
+
+    setCurrentPlay(play)
+    setData(null)
+    setSelectedExpect('')
+    setSelectedStrategyId('auto')
+    setFilter('all')
+
+    if (typeof window !== 'undefined') {
+      const url = `${window.location.pathname}?play=${play}`
+      window.history.pushState(null, '', url)
+    }
+  }
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const params = new URLSearchParams(window.location.search)
+    const play = params.get('play')
+
+    if (play === 'hongkong' || play === 'macau') {
+      setCurrentPlay(play)
+    }
+  }, [])
 
   React.useEffect(() => {
     loadData()
-  }, [loadData])
+  }, [currentPlay])
+
+  const history = data?.history || []
 
   const strategyRanking = React.useMemo(() => {
     if (!history.length) return []
     return buildStrategyRanking(history)
   }, [history])
 
-  const top20DrawStats = React.useMemo(() => {
-    if (!history.length || !strategyRanking.length) return null
-    return buildTop20DrawStats(history, strategyRanking, 30)
-  }, [history, strategyRanking])
+  const bestStrategy = strategyRanking[0] || null
 
-  const headStats = React.useMemo(() => {
-    if (!history.length) return []
-    return buildHeadStats(history)
-  }, [history])
+  const currentStrategy =
+    selectedStrategyId === 'auto'
+      ? bestStrategy
+      : strategyRanking.find((item) => item.id === selectedStrategyId) || bestStrategy
 
-  const headRecentRows = React.useMemo(() => {
-    if (!history.length) return []
-    return buildHeadRecentRows(history, 20)
-  }, [history])
+  const historicalStrategy = React.useMemo(() => {
+    if (!history.length || !selectedExpect) return currentStrategy
 
-  const headAggregateStats = React.useMemo(() => {
-    if (!history.length) return null
-    return buildHeadAggregateStats(history)
-  }, [history])
+    const targetIndex = history.findIndex(
+      (item) => String(item.expect) === String(selectedExpect)
+    )
 
-  const latest = history[0]
-  const finance100 = strategyRanking[0]
+    if (targetIndex === -1) return currentStrategy
+
+    const beforeHistory = history.slice(targetIndex + 1)
+
+    if (!beforeHistory.length) return currentStrategy
+
+    const beforeRanking = buildStrategyRanking(beforeHistory)
+
+    if (!beforeRanking.length) return currentStrategy
+
+    if (selectedStrategyId === 'auto') {
+      return beforeRanking[0]
+    }
+
+    return beforeRanking.find((item) => item.id === selectedStrategyId) || beforeRanking[0]
+  }, [history, selectedExpect, selectedStrategyId, currentStrategy])
+
+  const singleBacktest = buildSingleBacktest(
+    history,
+    selectedExpect,
+    historicalStrategy
+  )
+
+  const nextAnalysis =
+    currentStrategy && history.length
+      ? buildRecommendByStrategy(history, currentStrategy)
+      : null
+
+  const nextExpect = getNextExpectByPlay(history, data, currentPlay)
+
+  const nextRecommendNumbers = nextAnalysis?.recommendNumbers || []
+  const nextHotNumbers = nextAnalysis?.hotNumbers || []
+  const nextColdNumbers = nextAnalysis?.coldNumbers || []
+
+  const nextRecommendText = formatNumbers(nextRecommendNumbers)
+  const nextHotText = formatNumbers(nextHotNumbers)
+  const nextColdText = formatNumbers(nextColdNumbers)
+
+  const nextFullCopyText = [
+    `玩法：${playConfig.name}`,
+    `下一期期号：${nextExpect}`,
+    `策略：${historicalStrategy?.label || currentStrategy?.label || ''}`,
+    `下一期36码：${nextRecommendText}`,
+    `热门号：${nextHotText}`,
+    `冷门号：${nextColdText}`,
+  ].join('\n')
+
+  const detailBacktest100 = React.useMemo(() => {
+    if (!history.length || !historicalStrategy) return null
+    return buildFixedStrategyBacktestResult(history, historicalStrategy, 100)
+  }, [history, historicalStrategy])
+
+  const detailBacktest50 = React.useMemo(() => {
+    if (!history.length || !historicalStrategy) return null
+    return buildFixedStrategyBacktestResult(history, historicalStrategy, 50)
+  }, [history, historicalStrategy])
+
+  const best100Rows = detailBacktest100?.rows || []
+  const best50Rows = detailBacktest50?.rows || []
+
+  const recommendNumbers = singleBacktest?.recommendNumbers || []
+  const hotNumbers = singleBacktest?.hotNumbers || []
+  const coldNumbers = singleBacktest?.coldNumbers || []
+
+  const recommendText = formatNumbers(recommendNumbers)
+  const hotText = formatNumbers(hotNumbers)
+  const coldText = formatNumbers(coldNumbers)
+
+  const fullCopyText = [
+    `玩法：${playConfig.name}`,
+    `回测期号：${singleBacktest?.target?.expect || ''}`,
+    `策略：${currentStrategy?.label || ''}`,
+    `36码：${recommendText}`,
+    `热门号：${hotText}`,
+    `冷门号：${coldText}`,
+  ].join('\n')
+
+  const currentFinance100 = detailBacktest100
     ? calculateProfit(
-        strategyRanking[0].result100.hitCount,
-        strategyRanking[0].result100.testedCount,
+        detailBacktest100.hitCount,
+        detailBacktest100.testedCount,
         totalBetPerIssue,
         odds
       )
     : null
 
-  async function copyAggregateHeads() {
-    const text = formatHeadCopyText(headAggregateStats?.nextRecommend?.recommendHeads || [])
+  const currentFinance50 = detailBacktest50
+    ? calculateProfit(
+        detailBacktest50.hitCount,
+        detailBacktest50.testedCount,
+        totalBetPerIssue,
+        odds
+      )
+    : null
 
-    if (!text) return
-
-    try {
-      await navigator.clipboard.writeText(text)
-      alert(`已复制预测头数：${text}`)
-    } catch (error) {
-      alert(`复制失败，请手动复制：${text}`)
-    }
-  }
+  const filteredRecommend = recommendNumbers.filter((item) => {
+    if (filter === 'hot') return item.type === 'hot'
+    if (filter === 'cold') return item.type === 'cold'
+    if (filter === 'red') return getWave(item.num) === 'red'
+    if (filter === 'blue') return getWave(item.num) === 'blue'
+    if (filter === 'green') return getWave(item.num) === 'green'
+    return true
+  })
 
   return (
     <main className="page">
       <style jsx>{`
-        .page {
-          min-height: 100vh;
-          padding: 28px;
-          background:
-            radial-gradient(circle at top left, rgba(59, 130, 246, 0.18), transparent 30%),
-            linear-gradient(135deg, #07111f, #020617 60%, #111827);
-          color: #ffffff;
-          font-family: Arial, Helvetica, sans-serif;
-        }
-
-        .hero {
-          max-width: 1320px;
-          margin: 0 auto 18px;
+        .play-switch {
           display: flex;
-          justify-content: space-between;
           gap: 18px;
-          align-items: flex-start;
-        }
-
-        h1 {
-          margin: 0 0 10px;
-          font-size: 34px;
-          font-weight: 900;
-        }
-
-        .desc {
-          color: #cbd5e1;
-          line-height: 1.6;
-          margin: 0;
-        }
-
-        .switch-row {
-          margin-top: 16px;
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-        }
-
-        .btn {
-          border: 0;
-          border-radius: 14px;
-          padding: 12px 18px;
-          cursor: pointer;
-          font-weight: 900;
-          background: linear-gradient(135deg, #facc15, #f97316);
-          color: #111827;
-        }
-
-        .btn.secondary {
-          background: #111827;
-          color: #ffffff;
-          border: 1px solid #334155;
-        }
-
-        .btn.active {
-          outline: 3px solid #facc15;
-        }
-
-        .card {
-          max-width: 1320px;
-          margin: 16px auto;
-          padding: 20px;
-          border-radius: 22px;
-          background: rgba(15, 23, 42, 0.82);
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
-        }
-
-        .card-title {
-          font-size: 22px;
-          font-weight: 900;
-          margin-bottom: 10px;
-        }
-
-        .summary-grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 14px;
           margin-top: 18px;
-        }
-
-        .stat {
-          padding: 16px;
-          border-radius: 16px;
-          background: rgba(255, 255, 255, 0.06);
-          border: 1px solid rgba(255, 255, 255, 0.12);
-        }
-
-        .stat span {
-          display: block;
-          color: #94a3b8;
-          font-size: 13px;
-          margin-bottom: 8px;
-        }
-
-        .stat strong {
-          font-size: 20px;
-          font-weight: 900;
-        }
-
-        .error {
-          max-width: 1320px;
-          margin: 18px auto;
-          padding: 18px;
-          border-radius: 16px;
-          background: rgba(127, 29, 29, 0.8);
-          border: 1px solid #ef4444;
-          color: #ffffff;
-        }
-
-        .hit-rank-list {
-          display: flex;
+          align-items: center;
           flex-wrap: wrap;
-          gap: 10px;
-          margin: 16px 0;
         }
 
-        .hit-rank-chip {
-          padding: 9px 13px;
-          border-radius: 999px;
-          background: #facc15;
-          color: #111827;
-          font-size: 14px;
-          font-weight: 900;
-        }
-
-        .no-hit-chip {
-          padding: 9px 13px;
-          border-radius: 999px;
-          background: #374151;
-          color: #e5e7eb;
-          font-size: 14px;
+        .play-box {
+          min-width: 120px;
+          height: 44px;
+          padding: 0 28px;
+          border-radius: 4px;
+          background: rgba(15, 23, 42, 0.25);
+          color: #fff;
           font-weight: 800;
+          font-size: 16px;
+          cursor: pointer;
+          transition: all 0.2s ease;
         }
 
-        .table-wrap {
-          width: 100%;
+        .play-box.macau {
+          border: 4px solid #ef4444;
+        }
+
+        .play-box.hongkong {
+          border: 4px solid #52ff00;
+        }
+
+        .play-box:hover {
+          transform: translateY(-1px);
+          opacity: 0.9;
+        }
+
+        .play-box.active {
+          box-shadow: 0 0 20px rgba(250, 204, 21, 0.65);
+          background: rgba(250, 204, 21, 0.12);
+        }
+
+
+        .detail-table-wrap {
           overflow-x: auto;
-          border: 1px solid rgba(255, 255, 255, 0.14);
-          border-radius: 14px;
+          border: 1px solid #d9d9d9;
+          border-radius: 0;
           margin-top: 16px;
-          background: #0f172a;
+          background: #ffffff;
         }
 
-        table {
+        .detail-table {
           width: max-content;
-          min-width: 1100px;
+          min-width: 1240px;
           border-collapse: collapse;
-          color: #ffffff;
           font-size: 14px;
+          color: #111827;
+          background: #ffffff;
         }
 
-        th,
-        td {
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          padding: 10px 12px;
+        .detail-table th,
+        .detail-table td {
+          border: 1px solid #d9d9d9;
+          padding: 10px 8px;
           text-align: center;
           white-space: nowrap;
+          background: #ffffff;
+          vertical-align: middle;
         }
 
-        th {
-          background: rgba(255, 255, 255, 0.08);
-          color: #f8fafc;
-          font-weight: 900;
-        }
-
-        .left {
-          text-align: left;
-        }
-
-        .hit {
-          color: #facc15;
-          font-weight: 900;
-        }
-
-        .miss {
-          color: #94a3b8;
+        .detail-table thead th {
+          background: #f3f4f6;
+          color: #111827;
           font-weight: 800;
         }
 
-        .recent-table {
-          min-width: 1500px;
+        .detail-table tbody tr:hover td {
+          background: #fffaf0;
         }
 
-        .head-recent-table {
-          min-width: 1280px;
+        .issue-cell {
+          text-align: left !important;
+          min-width: 138px;
+          color: #111827;
+          font-weight: 700;
         }
 
-        .head-recent-table .head-hit-cell {
-          background: rgba(250, 204, 21, 0.18);
-          color: #facc15;
+        .issue-cell strong,
+        .issue-cell span {
+          display: inline;
+        }
+
+        .issue-cell span {
+          margin-left: 4px;
+          color: #111827;
+        }
+
+        .numbers-cell {
+          min-width: 385px;
+          text-align: left !important;
+        }
+
+        .special-cell {
+          min-width: 92px;
+        }
+
+        .detail-number {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          margin: 3px 5px;
+        }
+
+        .mini-ball {
+          width: 32px;
+          height: 32px;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: #fff;
           font-weight: 900;
+          font-size: 14px;
+          box-shadow: none;
         }
 
-        .head-recent-table .head-miss-cell {
-          color: #94a3b8;
+        .mini-ball.red {
+          background: #ff2448;
+        }
+
+        .mini-ball.blue {
+          background: #1296db;
+        }
+
+        .mini-ball.green {
+          background: #22c55e;
+        }
+
+        .mini-zodiac {
+          color: #111827;
+          font-weight: 700;
+        }
+
+        .red-text {
+          color: #ff2448;
           font-weight: 800;
         }
 
-        .hit-cell {
-          background: rgba(250, 204, 21, 0.18);
-          color: #facc15;
-          font-weight: 900;
-        }
-
-        .miss-cell {
-          color: #94a3b8;
+        .blue-text {
+          color: #1296db;
           font-weight: 800;
         }
 
-        .control-grid {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 12px;
-          margin-top: 14px;
-        }
-
-        input {
-          width: 100%;
-          padding: 12px;
-          border-radius: 12px;
-          background: #111827;
-          color: #ffffff;
-          border: 1px solid #334155;
+        .green-text {
+          color: #16a34a;
           font-weight: 800;
-          box-sizing: border-box;
         }
 
-        @media (max-width: 900px) {
-          .hero {
-            display: block;
-          }
+        .hit-text {
+          color: #d97706;
+          font-weight: 800;
+        }
 
-          .summary-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
+        .miss-text {
+          color: #111827;
+          font-weight: 700;
         }
       `}</style>
 
       <section className="hero">
         <div>
-          <h1>20档位当期开奖统计</h1>
-          <p className="desc">
-            独立页面：统计策略排行榜前20个档位，每个档位筛选36码后，是否命中当期特码；并展示近30期中奖 / 不中奖明细。
+          <div className="badge">{playConfig.badge}</div>
+          <h1>36码智能筛选系统</h1>
+          <p>
+            上方显示下一期推荐号码，下方显示历史回测结果。绿色圈代表平码命中36码，黄色圈代表特码命中36码。
           </p>
 
-          <div className="switch-row">
-            <button
-              className={`btn secondary ${currentPlay === 'macau' ? 'active' : ''}`}
-              onClick={() => setCurrentPlay('macau')}
+          <PlaySwitch currentPlay={currentPlay} onChange={changePlay} />
+
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '14px' }}>
+            <a
+              href="/top20"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '10px 18px',
+                borderRadius: '999px',
+                background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                color: '#ffffff',
+                fontWeight: 900,
+                textDecoration: 'none',
+                boxShadow: '0 10px 24px rgba(34, 197, 94, 0.22)',
+              }}
             >
-              澳门玩法
-            </button>
-            <button
-              className={`btn secondary ${currentPlay === 'hongkong' ? 'active' : ''}`}
-              onClick={() => setCurrentPlay('hongkong')}
-            >
-              香港玩法
-            </button>
+              查看20档位当期开奖统计
+            </a>
           </div>
         </div>
 
-        <button className="btn" onClick={loadData} disabled={loading}>
-          {loading ? '刷新中...' : '刷新数据'}
+        <button className="refresh-btn" onClick={loadData} disabled={loading}>
+          {loading ? '正在刷新...' : '刷新数据'}
         </button>
       </section>
 
-      {error && <div className="error">{error}</div>}
-
-      {loading && !data && (
-        <section className="card">
-          <div className="card-title">正在抓取{playConfig.name}数据...</div>
-        </section>
+      {error && (
+        <div className="error-card">
+          {error}
+        </div>
       )}
 
-      {data && top20DrawStats && (
+      {loading && !data && (
+        <div className="loading-card">
+          正在抓取{playConfig.name}六合彩开奖数据，请稍等...
+        </div>
+      )}
+
+      {data && currentStrategy && (
         <>
-          <section className="card">
-            <div className="card-title">
-              {playConfig.name}｜第 {latest?.expect} 期当期开奖统计
-            </div>
-            <p className="desc">
-              当期特码：{formatNumber(top20DrawStats.latestSpecial)}。
-              下面统计当期开奖之前的策略排行榜前20名档位，每个档位筛选36码后，是否命中当期最后的特码。
-            </p>
-
-            <div className="summary-grid">
-              <div className="stat">
-                <span>最新开奖期号</span>
-                <strong>第 {latest?.expect} 期</strong>
-              </div>
-              <div className="stat">
-                <span>开奖日期</span>
-                <strong>{latest?.openTime || '-'}</strong>
-              </div>
-              <div className="stat">
-                <span>当期特码</span>
-                <strong>{formatNumber(top20DrawStats.latestSpecial)}</strong>
-              </div>
-              <div className="stat">
-                <span>前20名命中档位</span>
-                <strong>{top20DrawStats.hitRanks.length} 个</strong>
-              </div>
-            </div>
-
-            <div className="control-grid">
-              <div className="stat">
-                <span>每期总投入</span>
-                <input
-                  type="number"
-                  value={totalBetPerIssue}
-                  onChange={(e) => setTotalBetPerIssue(Number(e.target.value) || 0)}
-                />
-              </div>
-              <div className="stat">
-                <span>赔率</span>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={odds}
-                  onChange={(e) => setOdds(Number(e.target.value) || 0)}
-                />
-              </div>
-            </div>
-
-            <div className="hit-rank-list">
-              {top20DrawStats.hitRanks.length ? (
-                top20DrawStats.hitRanks.map((item) => (
-                  <div key={`hit-rank-${item.rank}`} className="hit-rank-chip">
-                    第{item.rank}名：{item.status}
+          {nextAnalysis && (
+            <section className="card">
+              <div className="section-head">
+                <div>
+                  <div className="card-title">
+                    {playConfig.name}下一期推荐36码：第 {nextExpect} 期
                   </div>
-                ))
-              ) : (
-                <div className="no-hit-chip">当期前20名档位暂无命中</div>
-              )}
-            </div>
+                  <p className="section-desc">
+                    这里是根据最新已开奖数据生成的下一期推荐号码，不是历史回测。开奖后可以再用回测区验证是否命中。
+                  </p>
 
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>排名</th>
-                    <th>档位策略</th>
-                    <th>当期特码</th>
-                    <th>是否命中</th>
-                    <th>100期命中</th>
-                    <th>50期命中</th>
-                    <th>100期盈亏</th>
-                    <th>50期盈亏</th>
-                    <th>30期盈亏</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {top20DrawStats.latestStats.map((item) => {
-                    const profit100 = calculateProfit(
-                      item.strategy.result100?.hitCount || 0,
-                      item.strategy.result100?.testedCount || 0,
-                      totalBetPerIssue,
-                      odds
-                    )
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '14px' }}>
+                    <CopyButton label="复制下一期36码" text={nextRecommendText} />
+                    <CopyButton label="复制下一期热门号" text={nextHotText} />
+                    <CopyButton label="复制下一期冷门号" text={nextColdText} />
+                    <CopyButton label="复制下一期完整结果" text={nextFullCopyText} />
+                  </div>
+                </div>
 
-                    const profit50 = calculateProfit(
-                      item.strategy.result50?.hitCount || 0,
-                      item.strategy.result50?.testedCount || 0,
-                      totalBetPerIssue,
-                      odds
-                    )
+                <div className="filter-row">
+                  <button className="active">下一期推荐</button>
+                </div>
+              </div>
 
-                    const profit30 = calculateProfit(
-                      item.strategy.result30?.hitCount || 0,
-                      item.strategy.result30?.testedCount || 0,
-                      totalBetPerIssue,
-                      odds
-                    )
+              <div className="latest-info">
+                <div>
+                  <span>最新已开奖期号</span>
+                  <strong>第 {history?.[0]?.expect} 期</strong>
+                </div>
 
-                    return (
-                      <tr key={`latest-stat-${item.rank}`}>
-                        <td>第{item.rank}名</td>
-                        <td className="left">{item.label}</td>
-                        <td>{formatNumber(item.specialNumber)}</td>
-                        <td className={item.hit ? 'hit' : 'miss'}>{item.status}</td>
-                        <td>
-                          {item.strategy.result100?.hitCount || 0} / {item.strategy.result100?.testedCount || 0}
-                          {' '}
-                          = {item.strategy.result100?.hitRate || 0}%
-                        </td>
-                        <td>
-                          {item.strategy.result50?.hitCount || 0} / {item.strategy.result50?.testedCount || 0}
-                          {' '}
-                          = {item.strategy.result50?.hitRate || 0}%
-                        </td>
-                        <td style={{ color: profit100.profit >= 0 ? '#22c55e' : '#f87171', fontWeight: 900 }}>
-                          {formatMoney(profit100.profit)}
-                        </td>
-                        <td style={{ color: profit50.profit >= 0 ? '#22c55e' : '#f87171', fontWeight: 900 }}>
-                          {formatMoney(profit50.profit)}
-                        </td>
-                        <td style={{ color: profit30.profit >= 0 ? '#22c55e' : '#f87171', fontWeight: 900 }}>
-                          {formatMoney(profit30.profit)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                <div>
+                  <span>推荐下一期</span>
+                  <strong>第 {nextExpect} 期</strong>
+                </div>
 
-          <section className="card">
-            <div className="card-title">30期 / 50期最后特码头数预测统计</div>
+                <div>
+                  <span>当前策略</span>
+                  <strong>{currentStrategy?.modeLabel}</strong>
+                </div>
 
-            <p className="desc">
-              头数规则：01-09 = 0头，10-19 = 1头，20-29 = 2头，30-39 = 3头，40-49 = 4头。
-              这里只统计每期开奖最后一个特码的头数，不统计前6个正码。系统会显示本期最后特码头数，并用10组方案预测下一期可能出现的头数，同时综合10个方案取出现最多的4个头数。
-            </p>
+                <div>
+                  <span>热门号码</span>
+                  <strong>{nextHotNumbers.length}个</strong>
+                </div>
 
-            <div className="summary-grid">
-              {headStats.map((item) => (
-                <div key={`next-head-${item.id}`} className="stat">
-                  <span>{item.title}｜预测下一期头数</span>
+                <div>
+                  <span>冷门号码</span>
+                  <strong>{nextColdNumbers.length}个</strong>
+                </div>
+
+                <div>
+                  <span>最终推荐</span>
+                  <strong>{nextRecommendNumbers.length}个</strong>
+                </div>
+
+                {currentStrategy?.mode === 'aggregateTop20' && (
+                  <div>
+                    <span>综合统计</span>
+                    <strong>20档×36码，{currentStrategy.hotCount}热 + {currentStrategy.coldCount}冷</strong>
+                  </div>
+                )}
+              </div>
+
+              <div className="ball-grid recommend-grid">
+                {nextRecommendNumbers.map((item) => (
+                  <Ball
+                    key={item.num}
+                    num={item.num}
+                    count={item.count}
+                    type={item.type}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="top-grid">
+            <div className="card">
+              <div className="card-title">当前最佳策略</div>
+              <p className="section-desc">
+                系统自动测试多种组合，默认选择综合表现最好的策略。历史回测高，不代表下一期一定命中。
+              </p>
+
+              <div className="latest-info">
+                <div>
+                  <span>策略名称</span>
+                  <strong>{historicalStrategy?.label || currentStrategy?.label}</strong>
+                </div>
+
+                <div>
+                  <span>近100期总命中率</span>
                   <strong>
-                    {item.nextRecommend.recommendHeads.map((headItem) => `${headItem.head}头`).join('、')}
+                    {detailBacktest100?.hitCount || 0} / {detailBacktest100?.testedCount || 0}
+                    {' '}
+                    = {detailBacktest100?.hitRate || 0}%
                   </strong>
                 </div>
-              ))}
-            </div>
 
-
-            {headAggregateStats && (
-              <div className="aggregate-box">
-                <div className="card-title">10个头数档位综合｜出现最多的4个头数</div>
-
-                <p className="desc">
-                  计算方式：先抓取上面10个头数方案各自预测的头数，再统计0头到4头在10个方案里出现的次数，取出现最多的4个头数作为下一期综合预测。
-                </p>
-
-                <div className="aggregate-head-row">
-                  {(headAggregateStats.nextRecommend?.recommendHeads || []).map((item) => (
-                    <span key={`aggregate-head-${item.head}`} className="aggregate-head-chip">
-                      {item.head}头｜出现{item.count}次
-                    </span>
-                  ))}
-                </div>
-
-                <button className="copy-btn" onClick={copyAggregateHeads}>
-                  复制综合预测头数
-                </button>
-
-                <div className="summary-grid">
-                  <div className="stat">
-                    <span>综合预测下一期头数</span>
-                    <strong>{formatHeadOnlyList(headAggregateStats.nextRecommend?.recommendHeads || [])}</strong>
-                  </div>
-
-                  <div className="stat">
-                    <span>近50期综合命中</span>
-                    <strong>
-                      {headAggregateStats.result50.hitCount} / {headAggregateStats.result50.testedCount} = {headAggregateStats.result50.hitRate}%
-                    </strong>
-                  </div>
-
-                  <div className="stat">
-                    <span>近30期综合命中</span>
-                    <strong>
-                      {headAggregateStats.result30.hitCount} / {headAggregateStats.result30.testedCount} = {headAggregateStats.result30.hitRate}%
-                    </strong>
-                  </div>
-
-                  <div className="stat">
-                    <span>统计来源</span>
-                    <strong>10个头数方案</strong>
-                  </div>
+                <div>
+                  <span>近50期总命中率</span>
+                  <strong>
+                    {detailBacktest50?.hitCount || 0} / {detailBacktest50?.testedCount || 0}
+                    {' '}
+                    = {detailBacktest50?.hitRate || 0}%
+                  </strong>
                 </div>
               </div>
-            )}
 
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>方案</th>
-                    <th>热头数</th>
-                    <th>冷头数</th>
-                    <th>推荐头数</th>
-                    <th>近100期命中</th>
-                    <th>近50期命中</th>
-                    <th>近30期命中</th>
-                  </tr>
-                </thead>
+              <div className="latest-info">
+                <div>
+                  <span>近100期热码命中</span>
+                  <strong>
+                    {detailBacktest100?.hotHitCount || 0} / {detailBacktest100?.testedCount || 0}
+                    {' '}
+                    = {detailBacktest100?.hotHitRate || 0}%
+                  </strong>
+                </div>
 
-                <tbody>
-                  {headStats.map((item) => (
-                    <tr key={`head-row-${item.id}`}>
-                      <td>{item.title}</td>
-                      <td>{formatHeadList(item.nextRecommend.hotHeads)}</td>
-                      <td>{formatHeadList(item.nextRecommend.coldHeads)}</td>
-                      <td>{item.nextRecommend.recommendHeads.map((headItem) => `${headItem.head}头`).join('、')}</td>
-                      <td>
-                        {item.result100.hitCount} / {item.result100.testedCount} = {item.result100.hitRate}%
-                      </td>
-                      <td>
-                        {item.result50.hitCount} / {item.result50.testedCount} = {item.result50.hitRate}%
-                      </td>
-                      <td>
-                        {item.result30.hitCount} / {item.result30.testedCount} = {item.result30.hitRate}%
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                <div>
+                  <span>近100期冷码命中</span>
+                  <strong>
+                    {detailBacktest100?.coldHitCount || 0} / {detailBacktest100?.testedCount || 0}
+                    {' '}
+                    = {detailBacktest100?.coldHitRate || 0}%
+                  </strong>
+                </div>
+
+                <div>
+                  <span>{currentStrategy.mode === 'aggregateTop20' ? '综合来源' : '热码 + 冷码'}</span>
+                  <strong>
+                    {currentStrategy.mode === 'aggregateTop20'
+                      ? `20档 × 36码 = 720码，${currentStrategy.hotCount}热 + ${currentStrategy.coldCount}冷`
+                      : `${currentStrategy.hotCount} + ${currentStrategy.coldCount} = 36码`}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="latest-info">
+                <div>
+                  <span>近50期热码命中</span>
+                  <strong>
+                    {detailBacktest50?.hotHitCount || 0} / {detailBacktest50?.testedCount || 0}
+                    {' '}
+                    = {detailBacktest50?.hotHitRate || 0}%
+                  </strong>
+                </div>
+
+                <div>
+                  <span>近50期冷码命中</span>
+                  <strong>
+                    {detailBacktest50?.coldHitCount || 0} / {detailBacktest50?.testedCount || 0}
+                    {' '}
+                    = {detailBacktest50?.coldHitRate || 0}%
+                  </strong>
+                </div>
+
+                <div>
+                  <span>算法</span>
+                  <strong>{historicalStrategy?.modeLabel || currentStrategy?.modeLabel}</strong>
+                </div>
+              </div>
+
+              <div className="latest-info">
+                <div>
+                  <span>100期净盈亏</span>
+                  <strong style={{ color: currentFinance100?.profit >= 0 ? '#22c55e' : '#f87171' }}>
+                    {formatMoney(currentFinance100?.profit)}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>50期净盈亏</span>
+                  <strong style={{ color: currentFinance50?.profit >= 0 ? '#22c55e' : '#f87171' }}>
+                    {formatMoney(currentFinance50?.profit)}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>单码投注</span>
+                  <strong>{formatMoney((totalBetPerIssue || 0) / 36)}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">金额设置 / 选择策略</div>
+
+              <div className="stats-list">
+                <div>
+                  <span>每期总投入</span>
+                  <input
+                    type="number"
+                    value={totalBetPerIssue}
+                    onChange={(e) => setTotalBetPerIssue(Number(e.target.value) || 0)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '12px',
+                      background: '#111827',
+                      color: '#fff',
+                      border: '1px solid #3f3f46',
+                      fontWeight: '700',
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <span>赔率</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={odds}
+                    onChange={(e) => setOdds(Number(e.target.value) || 0)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '12px',
+                      background: '#111827',
+                      color: '#fff',
+                      border: '1px solid #3f3f46',
+                      fontWeight: '700',
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <span>策略选择</span>
+                  <select
+                    value={selectedStrategyId}
+                    onChange={(e) => setSelectedStrategyId(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '12px',
+                      background: '#111827',
+                      color: '#fff',
+                      border: '1px solid #3f3f46',
+                      fontWeight: '700',
+                    }}
+                  >
+                    <option value="auto">自动选择最佳策略</option>
+                    {strategyRanking.slice(0, 20).map((item, index) => (
+                      <option key={item.id} value={item.id}>
+                        第{index + 1}名｜{item.label}｜100期{item.result100.hitRate}%｜50期{item.result50.hitRate}%
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <span>理论随机命中率</span>
+                  <strong>36 / 49 = 73.47%</strong>
+                </div>
+
+                <div>
+                  <span>单次命中回款</span>
+                  <strong>{formatMoney((totalBetPerIssue / 36) * odds)}</strong>
+                </div>
+
+                <div>
+                  <span>策略综合分</span>
+                  <strong>{currentStrategy.score}%</strong>
+                </div>
+              </div>
             </div>
           </section>
 
           <section className="card">
-            <div className="card-title">近20期头数方案中奖 / 不中奖列表</div>
-
-            <p className="desc">
-              每一行是一期开奖结果，只看当期最后特码头数；每一列是上面10个头数方案。
-              中 = 该方案预测头数包含当期最后特码头数；未中 = 没有包含。
+            <div className="card-title">策略排行榜</div>
+            <p className="section-desc">
+              排名按：近100期命中率70%权重 + 近50期命中率30%权重。金额按每期投入 {formatMoney(totalBetPerIssue)}、赔率 {odds} 倍计算。
             </p>
 
-            <div className="table-wrap">
-              <table className="head-recent-table">
-                <thead>
-                  <tr>
-                    <th>日期 / 期数</th>
-                    <th>最后特码</th>
-                    <th>特码头数</th>
-                    {headStats.map((item) => (
-                      <th key={`head-recent-head-${item.id}`}>{item.title}</th>
-                    ))}
-                  </tr>
-                </thead>
+            <div className="history-list">
+              {strategyRanking.slice(0, 12).map((item, index) => {
+                const finance100 = calculateProfit(
+                  item.result100.hitCount,
+                  item.result100.testedCount,
+                  totalBetPerIssue,
+                  odds
+                )
 
-                <tbody>
-                  {headRecentRows.map((row) => (
-                    <tr key={`head-recent-row-${row.expect}`}>
-                      <td>{row.openTime} 第{row.expect}期</td>
-                      <td>{formatNumber(row.specialNumber)}</td>
-                      <td>{row.specialHead}头</td>
+                const finance50 = calculateProfit(
+                  item.result50.hitCount,
+                  item.result50.testedCount,
+                  totalBetPerIssue,
+                  odds
+                )
 
-                      {row.cells.map((cell) => (
-                        <td
-                          key={`head-recent-cell-${row.expect}-${cell.id}`}
-                          className={cell.hit ? 'head-hit-cell' : 'head-miss-cell'}
-                          title={`推荐：${cell.recommendHeads.map((headItem) => `${headItem.head}头`).join('、')}`}
-                        >
-                          {cell.status}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                return (
+                  <div key={item.id} className="history-row">
+                    <div className="history-meta">
+                      <strong>第 {index + 1} 名</strong>
+                      <span>{item.label}</span>
+                      <span style={{ display: 'block', marginTop: '6px', color: '#facc15' }}>
+                        综合分：{item.score}%
+                      </span>
+                    </div>
+
+                    <div className="latest-info" style={{ marginBottom: 0 }}>
+                      <div>
+                        <span>近100期总命中</span>
+                        <strong>{item.result100.hitCount} / {item.result100.testedCount} = {item.result100.hitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>近100期热码命中</span>
+                        <strong>{item.result100.hotHitCount} / {item.result100.testedCount} = {item.result100.hotHitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>近100期冷码命中</span>
+                        <strong>{item.result100.coldHitCount} / {item.result100.testedCount} = {item.result100.coldHitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>近50期总命中</span>
+                        <strong>{item.result50.hitCount} / {item.result50.testedCount} = {item.result50.hitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>近50期热码命中</span>
+                        <strong>{item.result50.hotHitCount} / {item.result50.testedCount} = {item.result50.hotHitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>近50期冷码命中</span>
+                        <strong>{item.result50.coldHitCount} / {item.result50.testedCount} = {item.result50.coldHitRate}%</strong>
+                      </div>
+
+                      <div>
+                        <span>100期净盈亏</span>
+                        <strong style={{ color: finance100.profit >= 0 ? '#22c55e' : '#f87171' }}>
+                          {formatMoney(finance100.profit)}
+                        </strong>
+                      </div>
+
+                      <div>
+                        <span>50期净盈亏</span>
+                        <strong style={{ color: finance50.profit >= 0 ? '#22c55e' : '#f87171' }}>
+                          {formatMoney(finance50.profit)}
+                        </strong>
+                      </div>
+
+                      <div>
+                        <span>规则</span>
+                        <strong>{item.modeLabel}</strong>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V2修复版】</div>
-            <p className="desc">
-              【修复版V2已生效】每一行是一期开奖结果，每一列都使用该期开奖之前的数据重新计算当时的前20名档位。中 = 该档位36码命中当期最后特码；未中 = 没有命中。
-            </p>
+            <div className="section-head">
+              <div>
+                <div className="card-title">选择历史回测期号</div>
+                <p className="section-desc">
+                  这里是历史回测，不是下一期推荐。选择某一期，系统只会使用该期之前的数据生成36码，不会把该期开奖号码提前放进去；下方近100期明细会跟当前查看的历史回测策略保持一致，避免同一期上面未中、下面命中的情况。
+                </p>
+              </div>
+            </div>
 
-            <div className="table-wrap">
-              <table className="recent-table">
-                <thead>
-                  <tr>
-                    <th>日期 / 期数</th>
-                    <th>特码</th>
-                    {top20DrawStats.latestStats.map((item) => (
-                      <th key={`head-rank-${item.rank}`}>
-                        第{item.rank}名
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {top20DrawStats.recentRows.map((row) => (
-                    <tr key={`recent-row-${row.expect}`}>
-                      <td>{row.openTime} 第{row.expect}期</td>
-                      <td>{formatNumber(row.specialNumber)}</td>
-                      {row.cells.map((cell) => (
-                        <td
-                          key={`recent-cell-${row.expect}-${cell.rank}`}
-                          className={cell.hit ? 'hit-cell' : 'miss-cell'}
-                          title={cell.strategyLabel || cell.strategy.label}
-                        >
-                          {cell.hit ? cell.status : '未中'}
-                        </td>
-                      ))}
-                    </tr>
+            <div className="latest-info">
+              <div>
+                <span>选择期号</span>
+                <select
+                  value={selectedExpect}
+                  onChange={(e) => setSelectedExpect(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '12px',
+                    background: '#111827',
+                    color: '#fff',
+                    border: '1px solid #3f3f46',
+                    fontWeight: '700',
+                  }}
+                >
+                  {history.map((item) => (
+                    <option key={item.expect} value={item.expect}>
+                      第 {item.expect} 期
+                    </option>
                   ))}
-                </tbody>
-              </table>
+                </select>
+              </div>
+
+              <div>
+                <span>当前策略</span>
+                <strong>{historicalStrategy?.modeLabel || currentStrategy?.modeLabel}</strong>
+              </div>
+
+              <div>
+                <span>该期总结果</span>
+                <strong>{singleBacktest?.hit ? '命中' : '未命中'}</strong>
+              </div>
+
+              <div>
+                <span>该期热码结果</span>
+                <strong>{singleBacktest?.hotHit ? '热码命中' : '热码未中'}</strong>
+              </div>
+
+              <div>
+                <span>该期冷码结果</span>
+                <strong>{singleBacktest?.coldHit ? '冷码命中' : '冷码未中'}</strong>
+              </div>
             </div>
           </section>
+
+          {singleBacktest && (
+            <>
+              <section className="top-grid">
+                <div className="card latest-card">
+                  <div className="card-title">
+                    第 {singleBacktest.target.expect} 期历史回测开奖
+                  </div>
+
+                  <div className="latest-info">
+                    <div>
+                      <span>开奖时间</span>
+                      <strong>{singleBacktest.target.openTime || '-'}</strong>
+                    </div>
+
+                    <div>
+                      <span>特码</span>
+                      <strong>
+                        {String(singleBacktest.specialNumber).padStart(2, '0')}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>结果</span>
+                      <strong>
+                        {singleBacktest.hotHit
+                          ? '热码命中'
+                          : singleBacktest.coldHit
+                            ? '冷码命中'
+                            : '未命中'}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="latest-balls">
+                    {singleBacktest.target.numbers.map((num, index) => {
+                      const inRecommend = singleBacktest.recommendNumbers?.some(
+                        (recommend) => recommend.num === num
+                      )
+
+                      const isSpecial = index === 6
+
+                      return (
+                        <React.Fragment key={`${num}-${index}`}>
+                          {isSpecial && <div className="plus">+</div>}
+                          <Ball
+                            num={num}
+                            hit={inRecommend}
+                            hitType={isSpecial ? 'special' : 'normal'}
+                          />
+                        </React.Fragment>
+                      )
+                    })}
+                  </div>
+
+                  <div style={{ marginTop: '20px', color: '#a1a1aa' }}>
+                    绿色圈 = 平码落入36码；黄色圈 = 特码落入36码。
+                  </div>
+                </div>
+
+                <div className="card stats-card">
+                  <div className="card-title">该期历史回测结果</div>
+
+                  <div className="stats-list">
+                    <div>
+                      <span>热门号码</span>
+                      <strong>{hotNumbers.length}个</strong>
+                    </div>
+
+                    <div>
+                      <span>冷门号码</span>
+                      <strong>{coldNumbers.length}个</strong>
+                    </div>
+
+                    <div>
+                      <span>最终筛选</span>
+                      <strong>{recommendNumbers.length}个</strong>
+                    </div>
+
+                    <div>
+                      <span>特码结果</span>
+                      <strong>
+                        {singleBacktest.hotHit
+                          ? '热码命中'
+                          : singleBacktest.coldHit
+                            ? '冷码命中'
+                            : '未命中'}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="card">
+                <div className="section-head">
+                  <div>
+                    <div className="card-title">本期历史回测36码</div>
+                    <p className="section-desc">
+                      这组36码是用于回测第 {singleBacktest.target.expect} 期的，不是下一期推荐。绿色圈代表平码命中36码，黄色圈代表特码命中36码。
+                    </p>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '14px' }}>
+                      <CopyButton label="复制回测36码" text={recommendText} />
+                      <CopyButton label="复制回测热门号" text={hotText} />
+                      <CopyButton label="复制回测冷门号" text={coldText} />
+                      <CopyButton label="复制回测完整结果" text={fullCopyText} />
+                    </div>
+                  </div>
+
+                  <div className="filter-row">
+                    {[
+                      ['all', '全部'],
+                      ['hot', '热门'],
+                      ['cold', '冷门'],
+                      ['red', '红波'],
+                      ['blue', '蓝波'],
+                      ['green', '绿波'],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        className={filter === key ? 'active' : ''}
+                        onClick={() => setFilter(key)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="ball-grid recommend-grid">
+                  {filteredRecommend.map((item) => {
+                    const isSpecial = item.num === singleBacktest.specialNumber
+                    const isNormal = singleBacktest.target.numbers
+                      .slice(0, 6)
+                      .includes(item.num)
+
+                    return (
+                      <Ball
+                        key={item.num}
+                        num={item.num}
+                        count={item.count}
+                        type={item.type}
+                        hit={isSpecial || isNormal}
+                        hitType={isSpecial ? 'special' : 'normal'}
+                      />
+                    )
+                  })}
+                </div>
+              </section>
+
+              <section className="three-grid">
+                <div className="card">
+                  <div className="card-title hot-title">回测热门号码</div>
+                  <p className="section-desc">当前策略筛选出的高分号码。</p>
+
+                  <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+                    <CopyButton label="复制热门号" text={hotText} />
+                  </div>
+
+                  <div className="ball-grid">
+                    {hotNumbers.map((item) => {
+                      const isSpecial = item.num === singleBacktest.specialNumber
+                      const isNormal = singleBacktest.target.numbers
+                        .slice(0, 6)
+                        .includes(item.num)
+
+                      return (
+                        <Ball
+                          key={item.num}
+                          num={item.num}
+                          count={item.count}
+                          type="hot"
+                          small
+                          hit={isSpecial || isNormal}
+                          hitType={isSpecial ? 'special' : 'normal'}
+                        />
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className="card-title cold-title">回测冷门号码</div>
+                  <p className="section-desc">当前策略筛选出的低分号码。</p>
+
+                  <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+                    <CopyButton label="复制冷门号" text={coldText} />
+                  </div>
+
+                  <div className="ball-grid">
+                    {coldNumbers.map((item) => {
+                      const isSpecial = item.num === singleBacktest.specialNumber
+                      const isNormal = singleBacktest.target.numbers
+                        .slice(0, 6)
+                        .includes(item.num)
+
+                      return (
+                        <Ball
+                          key={item.num}
+                          num={item.num}
+                          count={item.count}
+                          type="cold"
+                          small
+                          hit={isSpecial || isNormal}
+                          hitType={isSpecial ? 'special' : 'normal'}
+                        />
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className="card-title">策略说明</div>
+
+                  <div className="analysis-list">
+                    <div>
+                      <span>算法</span>
+                      <strong>{historicalStrategy?.modeLabel || currentStrategy?.modeLabel}</strong>
+                    </div>
+
+                    <div>
+                      <span>样本/来源</span>
+                      <strong>{currentStrategy.mode === 'aggregateTop20' ? '前20档位综合' : `前${currentStrategy.sampleSize}期`}</strong>
+                    </div>
+
+                    <div>
+                      <span>组合</span>
+                      <strong>{currentStrategy.mode === 'aggregateTop20' ? `720码里选 ${currentStrategy.hotCount}热 + ${currentStrategy.coldCount}冷` : `热${currentStrategy.hotCount} + 冷${currentStrategy.coldCount}`}</strong>
+                    </div>
+
+                    <div>
+                      <span>说明</span>
+                      <strong>{currentStrategy.desc}</strong>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <DetailBacktestTable title="近100期回测明细" rows={best100Rows} limit={100} />
+
+              <DetailBacktestTable title="近50期回测明细" rows={best50Rows} limit={50} />
+
+              <div className="footer-note">
+                回测逻辑：上方单期历史回测和下方近100期/50期明细使用同一套历史策略。绿色圈表示前6个平码落入36码；黄色圈表示最后特码落入36码。金额回测只按特码命中计算。
+              </div>
+            </>
+          )}
         </>
       )}
     </main>
