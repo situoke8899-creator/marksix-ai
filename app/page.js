@@ -984,25 +984,34 @@ export default function Page() {
   const top20PageSnapshot = React.useMemo(() => {
     if (!history.length || !strategyRanking.length) return null
 
-    const top20 = strategyRanking.slice(0, 20)
-    const latest = history[0]
-    const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
+    function makeRowRanking(draw) {
+      const targetIndex = history.findIndex(
+        (item) => String(item.expect) === String(draw.expect)
+      )
 
-    const latestStats = top20.map((strategy, index) => {
-      const result = buildSingleBacktest(history, latest.expect, strategy)
+      const beforeHistory = targetIndex >= 0 ? history.slice(targetIndex + 1) : []
+
+      if (!beforeHistory.length) return []
+
+      return buildStrategyRanking(beforeHistory).slice(0, 20)
+    }
+
+    function makeCell(draw, strategy, index) {
+      const result = buildSingleBacktest(history, draw.expect, strategy)
 
       return {
         rank: index + 1,
         label: strategy.label,
         strategyId: strategy.id,
         modeLabel: strategy.modeLabel,
-        expect: latest.expect,
-        openTime: latest.openTime,
-        specialNumber: latestSpecial,
+        expect: draw.expect,
+        openTime: draw.openTime,
+        specialNumber: draw?.numbers?.[draw.numbers.length - 1],
         hit: Boolean(result?.hit),
         hotHit: Boolean(result?.hotHit),
         coldHit: Boolean(result?.coldHit),
         status: result?.hotHit ? '热码命中' : result?.coldHit ? '冷码命中' : result?.hit ? '命中' : '未中',
+        shortStatus: result?.hotHit ? '热中' : result?.coldHit ? '冷中' : result?.hit ? '中' : '未中',
         strategy: {
           id: strategy.id,
           label: strategy.label,
@@ -1025,22 +1034,31 @@ export default function Page() {
             : null,
         },
       }
-    })
+    }
+
+    const latest = history[0]
+    const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
+    const latestTop20 = makeRowRanking(latest)
+
+    const latestStats = latestTop20.map((strategy, index) => (
+      makeCell(latest, strategy, index)
+    ))
 
     const recentRows = history.slice(0, 30).map((draw) => {
+      const rowTop20 = makeRowRanking(draw)
       const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
 
-      const cells = top20.map((strategy, index) => {
-        const result = buildSingleBacktest(history, draw.expect, strategy)
+      const cells = rowTop20.map((strategy, index) => {
+        const cell = makeCell(draw, strategy, index)
 
         return {
-          rank: index + 1,
-          strategyId: strategy.id,
-          strategyLabel: strategy.label,
-          hit: Boolean(result?.hit),
-          hotHit: Boolean(result?.hotHit),
-          coldHit: Boolean(result?.coldHit),
-          status: result?.hotHit ? '热中' : result?.coldHit ? '冷中' : result?.hit ? '中' : '未中',
+          rank: cell.rank,
+          strategyId: cell.strategyId,
+          strategyLabel: cell.label,
+          hit: cell.hit,
+          hotHit: cell.hotHit,
+          coldHit: cell.coldHit,
+          status: cell.shortStatus,
         }
       })
 
@@ -1053,7 +1071,7 @@ export default function Page() {
     })
 
     return {
-      version: 'home-sync-v1',
+      version: 'home-sync-v2-historical-row',
       play: currentPlay,
       generatedAt: Date.now(),
       latest,
