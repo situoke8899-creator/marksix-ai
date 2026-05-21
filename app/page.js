@@ -984,26 +984,43 @@ export default function Page() {
   const top20PageSnapshot = React.useMemo(() => {
     if (!history.length || !strategyRanking.length) return null
 
-    function makeRowRanking(draw) {
+    // V7：列的顺序固定等于首页下拉框当前第1名到第20名。
+    // 但是每一期判断中/未中时，不能用最新数据生成36码；
+    // 必须用该期开奖之前的数据，并按相同 strategy.id 找到当时对应策略。
+    const homepageTop20 = strategyRanking.slice(0, 20)
+
+    function findHistoricalStrategy(draw, homepageStrategy) {
       const targetIndex = history.findIndex(
         (item) => String(item.expect) === String(draw.expect)
       )
 
       const beforeHistory = targetIndex >= 0 ? history.slice(targetIndex + 1) : []
 
-      if (!beforeHistory.length) return []
+      if (!beforeHistory.length) return homepageStrategy
 
-      return buildStrategyRanking(beforeHistory).slice(0, 20)
+      const historicalRanking = buildStrategyRanking(beforeHistory)
+      return (
+        historicalRanking.find((item) => item.id === homepageStrategy.id) ||
+        homepageStrategy
+      )
     }
 
-    function makeCell(draw, strategy, index) {
-      const result = buildSingleBacktest(history, draw.expect, strategy)
+    function makeCell(draw, homepageStrategy, index) {
+      const historicalStrategy = findHistoricalStrategy(draw, homepageStrategy)
+      const result = buildSingleBacktest(history, draw.expect, historicalStrategy)
 
       return {
         rank: index + 1,
-        label: strategy.label,
-        strategyId: strategy.id,
-        modeLabel: strategy.modeLabel,
+
+        // 显示用：永远显示首页下拉框里的策略名，确保 /top20 第几列 = 首页第几名
+        label: homepageStrategy.label,
+        strategyId: homepageStrategy.id,
+        modeLabel: homepageStrategy.modeLabel,
+
+        // 计算用：保存实际用于该期开奖前回测的策略名，方便以后检查
+        usedStrategyId: historicalStrategy.id,
+        usedStrategyLabel: historicalStrategy.label,
+
         expect: draw.expect,
         openTime: draw.openTime,
         specialNumber: draw?.numbers?.[draw.numbers.length - 1],
@@ -1013,23 +1030,23 @@ export default function Page() {
         status: result?.hotHit ? '热码命中' : result?.coldHit ? '冷码命中' : result?.hit ? '命中' : '未中',
         shortStatus: result?.hotHit ? '热中' : result?.coldHit ? '冷中' : result?.hit ? '中' : '未中',
         strategy: {
-          id: strategy.id,
-          label: strategy.label,
-          modeLabel: strategy.modeLabel,
-          hotCount: strategy.hotCount,
-          coldCount: strategy.coldCount,
-          result100: strategy.result100
+          id: homepageStrategy.id,
+          label: homepageStrategy.label,
+          modeLabel: homepageStrategy.modeLabel,
+          hotCount: homepageStrategy.hotCount,
+          coldCount: homepageStrategy.coldCount,
+          result100: homepageStrategy.result100
             ? {
-                hitCount: strategy.result100.hitCount,
-                testedCount: strategy.result100.testedCount,
-                hitRate: strategy.result100.hitRate,
+                hitCount: homepageStrategy.result100.hitCount,
+                testedCount: homepageStrategy.result100.testedCount,
+                hitRate: homepageStrategy.result100.hitRate,
               }
             : null,
-          result50: strategy.result50
+          result50: homepageStrategy.result50
             ? {
-                hitCount: strategy.result50.hitCount,
-                testedCount: strategy.result50.testedCount,
-                hitRate: strategy.result50.hitRate,
+                hitCount: homepageStrategy.result50.hitCount,
+                testedCount: homepageStrategy.result50.testedCount,
+                hitRate: homepageStrategy.result50.hitRate,
               }
             : null,
         },
@@ -1038,23 +1055,23 @@ export default function Page() {
 
     const latest = history[0]
     const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
-    const latestTop20 = makeRowRanking(latest)
 
-    const latestStats = latestTop20.map((strategy, index) => (
-      makeCell(latest, strategy, index)
+    const latestStats = homepageTop20.map((homepageStrategy, index) => (
+      makeCell(latest, homepageStrategy, index)
     ))
 
     const recentRows = history.slice(0, 30).map((draw) => {
-      const rowTop20 = makeRowRanking(draw)
       const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
 
-      const cells = rowTop20.map((strategy, index) => {
-        const cell = makeCell(draw, strategy, index)
+      const cells = homepageTop20.map((homepageStrategy, index) => {
+        const cell = makeCell(draw, homepageStrategy, index)
 
         return {
           rank: cell.rank,
           strategyId: cell.strategyId,
           strategyLabel: cell.label,
+          usedStrategyId: cell.usedStrategyId,
+          usedStrategyLabel: cell.usedStrategyLabel,
           hit: cell.hit,
           hotHit: cell.hotHit,
           coldHit: cell.coldHit,
@@ -1071,7 +1088,7 @@ export default function Page() {
     })
 
     return {
-      version: 'home-sync-v2-historical-row',
+      version: 'home-sync-v7-fixed-rank-historical-id',
       play: currentPlay,
       generatedAt: Date.now(),
       latest,
