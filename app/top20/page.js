@@ -87,6 +87,7 @@ function makeStrategies() {
   return strategies
 }
 
+
 function buildRecommend(beforeHistory, strategy) {
   const source = beforeHistory.slice(0, strategy.sampleSize)
 
@@ -188,6 +189,8 @@ function buildRecommend(beforeHistory, strategy) {
   }
 }
 
+
+
 function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = [], hotCount = 36, coldCount = 0) {
   const occurrenceMap = new Map()
 
@@ -272,18 +275,15 @@ function buildTop20AggregateRecommend(beforeHistory, aggregateStrategies = [], h
   }
 }
 
+
 function buildRecommendByStrategy(beforeHistory, strategy) {
   if (strategy?.mode === 'aggregateTop20') {
-    return buildTop20AggregateRecommend(
-      beforeHistory,
-      strategy.aggregateStrategies || [],
-      strategy.hotCount || 36,
-      strategy.coldCount || 0
-    )
+    return buildTop20AggregateRecommend(beforeHistory, strategy.aggregateStrategies || [], strategy.hotCount || 36, strategy.coldCount || 0)
   }
 
   return buildRecommend(beforeHistory, strategy)
 }
+
 
 function getRequiredSampleSize(strategy) {
   if (strategy?.mode === 'aggregateTop20') {
@@ -293,6 +293,7 @@ function getRequiredSampleSize(strategy) {
 
   return strategy?.sampleSize || 30
 }
+
 
 function testStrategy(history, strategy, rangeSize) {
   const rows = []
@@ -347,19 +348,18 @@ function testStrategy(history, strategy, rangeSize) {
   }
 }
 
+
 function buildStrategyRanking(history) {
   const strategies = makeStrategies()
 
   const baseResults = strategies.map((strategy) => {
     const result100 = testStrategy(history, strategy, 100)
     const result50 = testStrategy(history, strategy, 50)
-    const result30 = testStrategy(history, strategy, 30)
 
     return {
       ...strategy,
       result100,
       result50,
-      result30,
       score: Number((result100.hitRate * 0.7 + result50.hitRate * 0.3).toFixed(2)),
     }
   })
@@ -420,13 +420,11 @@ function buildStrategyRanking(history) {
 
     const aggregateResult100 = testStrategy(history, aggregateStrategyBase, 100)
     const aggregateResult50 = testStrategy(history, aggregateStrategyBase, 50)
-    const aggregateResult30 = testStrategy(history, aggregateStrategyBase, 30)
 
     return {
       ...aggregateStrategyBase,
       result100: aggregateResult100,
       result50: aggregateResult50,
-      result30: aggregateResult30,
       score: Number((aggregateResult100.hitRate * 0.7 + aggregateResult50.hitRate * 0.3).toFixed(2)),
     }
   })
@@ -439,6 +437,7 @@ function buildStrategyRanking(history) {
     return b.result50.hitRate - a.result50.hitRate
   })
 }
+
 
 function buildSingleBacktest(history, targetExpect, strategy) {
   if (!history?.length || !targetExpect || !strategy) return null
@@ -475,6 +474,8 @@ function buildSingleBacktest(history, targetExpect, strategy) {
   }
 }
 
+
+
 function getShortStrategyLabel(strategy) {
   if (!strategy) return ''
 
@@ -492,6 +493,7 @@ function getShortStrategyLabel(strategy) {
 function buildTop20DrawStats(history, strategyRanking, rangeSize = 30) {
   if (!history?.length || !strategyRanking?.length) return null
 
+  // V4：第1名到第20名，固定同步首页“策略选择”下拉框的第1名到第20名
   const top20 = strategyRanking.slice(0, 20)
   const latest = history[0]
   const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
@@ -524,7 +526,7 @@ function buildTop20DrawStats(history, strategyRanking, rangeSize = 30) {
       return {
         rank: index + 1,
         strategy,
-        strategyLabel: getShortStrategyLabel(strategy),
+        strategyLabel: strategy.label,
         hit: Boolean(result?.hit),
         hotHit: Boolean(result?.hotHit),
         coldHit: Boolean(result?.coldHit),
@@ -1763,9 +1765,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V3固定列版】</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V4同步首页策略版】</div>
             <p className="desc">
-              【V3固定列版已生效】每一列固定对应当前首页策略排行榜第1名到第20名；每一行只用该期开奖之前的数据生成36码。中 = 该档位36码命中当期最后特码；未中 = 没有命中。
+              【V4同步首页策略版已生效】第1名到第20名完全按照首页策略选择下拉框的排名抓取；首页第几名，/top20 就是第几列。
             </p>
 
             <div className="table-wrap">
