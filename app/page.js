@@ -148,7 +148,7 @@ function DetailBacktestTable({ title, rows, limit = 100 }) {
     <section className="card">
       <div className="card-title">{title}</div>
       <p className="section-desc">
-        表格按开奖站样式展示，号码显示波色与生肖。每一行都只用该期开奖之前的数据生成36码；如果是自动策略，每一行也按当期之前的数据重新选最佳策略。黄色圈 = 特码落入当期筛选36码；绿色圈 = 平码落入36码。
+        表格按开奖站样式展示，号码显示波色与生肖。黄色圈 = 落入当期筛选36码；绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
       </p>
 
       <div className="detail-table-wrap">
@@ -764,80 +764,6 @@ function buildSingleBacktest(history, targetExpect, strategy) {
   }
 }
 
-
-function resolveHistoricalStrategy(beforeHistory, selectedStrategyId = 'auto', fallbackStrategy = null) {
-  if (!beforeHistory?.length) return fallbackStrategy
-
-  const historicalRanking = buildStrategyRanking(beforeHistory)
-
-  if (!historicalRanking.length) return fallbackStrategy
-
-  if (selectedStrategyId === 'auto') {
-    return historicalRanking[0]
-  }
-
-  return historicalRanking.find((item) => item.id === selectedStrategyId) || fallbackStrategy || historicalRanking[0]
-}
-
-function buildHistoricalBacktestResult(history, selectedStrategyId = 'auto', rangeSize = 100, fallbackStrategy = null) {
-  const rows = []
-
-  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
-    const target = history[index]
-    const beforeHistory = history.slice(index + 1)
-
-    if (!beforeHistory.length) continue
-
-    const rowStrategy = resolveHistoricalStrategy(beforeHistory, selectedStrategyId, fallbackStrategy)
-
-    if (!rowStrategy || beforeHistory.length < getRequiredSampleSize(rowStrategy)) continue
-
-    const analysis = buildRecommendByStrategy(beforeHistory, rowStrategy)
-    const specialNumber = target.numbers[target.numbers.length - 1]
-
-    const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
-    const hotSet = new Set(analysis.hotNumbers.map((item) => item.num))
-    const coldSet = new Set(analysis.coldNumbers.map((item) => item.num))
-
-    const hit = recommendSet.has(specialNumber)
-    const hotHit = hotSet.has(specialNumber)
-    const coldHit = coldSet.has(specialNumber)
-
-    rows.push({
-      expect: target.expect,
-      openTime: target.openTime,
-      numbers: target.numbers,
-      specialNumber,
-      hit,
-      hotHit,
-      coldHit,
-      usedStrategyId: rowStrategy.id,
-      usedStrategyLabel: rowStrategy.label,
-      ...analysis,
-    })
-  }
-
-  const testedCount = rows.length
-  const hitCount = rows.filter((item) => item.hit).length
-  const hotHitCount = rows.filter((item) => item.hotHit).length
-  const coldHitCount = rows.filter((item) => item.coldHit).length
-
-  const hitRate = testedCount ? Number(((hitCount / testedCount) * 100).toFixed(2)) : 0
-  const hotHitRate = testedCount ? Number(((hotHitCount / testedCount) * 100).toFixed(2)) : 0
-  const coldHitRate = testedCount ? Number(((coldHitCount / testedCount) * 100).toFixed(2)) : 0
-
-  return {
-    testedCount,
-    hitCount,
-    hotHitCount,
-    coldHitCount,
-    hitRate,
-    hotHitRate,
-    coldHitRate,
-    rows,
-  }
-}
-
 function copyToClipboard(text) {
   if (!text) {
     alert('没有可复制的号码')
@@ -1036,24 +962,14 @@ export default function Page() {
   const nextFullCopyText = [
     `玩法：${playConfig.name}`,
     `下一期期号：${nextExpect}`,
-    `策略：${historicalStrategy?.label || currentStrategy?.label || ''}`,
+    `策略：${currentStrategy?.label || ''}`,
     `下一期36码：${nextRecommendText}`,
     `热门号：${nextHotText}`,
     `冷门号：${nextColdText}`,
   ].join('\n')
 
-  const detailBacktest100 = React.useMemo(() => {
-    if (!history.length) return null
-    return buildHistoricalBacktestResult(history, selectedStrategyId, 100, currentStrategy)
-  }, [history, selectedStrategyId, currentStrategy])
-
-  const detailBacktest50 = React.useMemo(() => {
-    if (!history.length) return null
-    return buildHistoricalBacktestResult(history, selectedStrategyId, 50, currentStrategy)
-  }, [history, selectedStrategyId, currentStrategy])
-
-  const best100Rows = detailBacktest100?.rows || []
-  const best50Rows = detailBacktest50?.rows || []
+  const best100Rows = currentStrategy?.result100?.rows || []
+  const best50Rows = currentStrategy?.result50?.rows || []
 
   const recommendNumbers = singleBacktest?.recommendNumbers || []
   const hotNumbers = singleBacktest?.hotNumbers || []
@@ -1066,25 +982,25 @@ export default function Page() {
   const fullCopyText = [
     `玩法：${playConfig.name}`,
     `回测期号：${singleBacktest?.target?.expect || ''}`,
-    `策略：${historicalStrategy?.label || currentStrategy?.label || ''}`,
+    `策略：${currentStrategy?.label || ''}`,
     `36码：${recommendText}`,
     `热门号：${hotText}`,
     `冷门号：${coldText}`,
   ].join('\n')
 
-  const currentFinance100 = detailBacktest100
+  const currentFinance100 = currentStrategy
     ? calculateProfit(
-        detailBacktest100.hitCount,
-        detailBacktest100.testedCount,
+        currentStrategy.result100.hitCount,
+        currentStrategy.result100.testedCount,
         totalBetPerIssue,
         odds
       )
     : null
 
-  const currentFinance50 = detailBacktest50
+  const currentFinance50 = currentStrategy
     ? calculateProfit(
-        detailBacktest50.hitCount,
-        detailBacktest50.testedCount,
+        currentStrategy.result50.hitCount,
+        currentStrategy.result50.testedCount,
         totalBetPerIssue,
         odds
       )
@@ -1410,18 +1326,18 @@ export default function Page() {
                 <div>
                   <span>近100期总命中率</span>
                   <strong>
-                    {detailBacktest100?.hitCount || 0} / {detailBacktest100?.testedCount || 0}
+                    {currentStrategy.result100.hitCount} / {currentStrategy.result100.testedCount}
                     {' '}
-                    = {detailBacktest100?.hitRate || 0}%
+                    = {currentStrategy.result100.hitRate}%
                   </strong>
                 </div>
 
                 <div>
                   <span>近50期总命中率</span>
                   <strong>
-                    {detailBacktest50?.hitCount || 0} / {detailBacktest50?.testedCount || 0}
+                    {currentStrategy.result50.hitCount} / {currentStrategy.result50.testedCount}
                     {' '}
-                    = {detailBacktest50?.hitRate || 0}%
+                    = {currentStrategy.result50.hitRate}%
                   </strong>
                 </div>
               </div>
@@ -1430,18 +1346,18 @@ export default function Page() {
                 <div>
                   <span>近100期热码命中</span>
                   <strong>
-                    {detailBacktest100?.hotHitCount || 0} / {detailBacktest100?.testedCount || 0}
+                    {currentStrategy.result100.hotHitCount} / {currentStrategy.result100.testedCount}
                     {' '}
-                    = {detailBacktest100?.hotHitRate || 0}%
+                    = {currentStrategy.result100.hotHitRate}%
                   </strong>
                 </div>
 
                 <div>
                   <span>近100期冷码命中</span>
                   <strong>
-                    {detailBacktest100?.coldHitCount || 0} / {detailBacktest100?.testedCount || 0}
+                    {currentStrategy.result100.coldHitCount} / {currentStrategy.result100.testedCount}
                     {' '}
-                    = {detailBacktest100?.coldHitRate || 0}%
+                    = {currentStrategy.result100.coldHitRate}%
                   </strong>
                 </div>
 
@@ -1459,18 +1375,18 @@ export default function Page() {
                 <div>
                   <span>近50期热码命中</span>
                   <strong>
-                    {detailBacktest50?.hotHitCount || 0} / {detailBacktest50?.testedCount || 0}
+                    {currentStrategy.result50.hotHitCount} / {currentStrategy.result50.testedCount}
                     {' '}
-                    = {detailBacktest50?.hotHitRate || 0}%
+                    = {currentStrategy.result50.hotHitRate}%
                   </strong>
                 </div>
 
                 <div>
                   <span>近50期冷码命中</span>
                   <strong>
-                    {detailBacktest50?.coldHitCount || 0} / {detailBacktest50?.testedCount || 0}
+                    {currentStrategy.result50.coldHitCount} / {currentStrategy.result50.testedCount}
                     {' '}
-                    = {detailBacktest50?.coldHitRate || 0}%
+                    = {currentStrategy.result50.coldHitRate}%
                   </strong>
                 </div>
 
@@ -1971,7 +1887,7 @@ export default function Page() {
               <DetailBacktestTable title="近50期回测明细" rows={best50Rows} limit={50} />
 
               <div className="footer-note">
-                回测逻辑：每一行只使用该期之前的数据，后续新开奖不会反向改变旧期回测。绿色圈表示前6个平码落入当期筛选36码；黄色圈表示最后特码落入当期筛选36码。金额回测只按特码命中计算。
+                回测逻辑：绿色圈表示前6个平码落入当期筛选36码；黄色圈表示最后特码落入当期筛选36码。金额回测只按特码命中计算。
               </div>
             </>
           )}
