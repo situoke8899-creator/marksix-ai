@@ -914,10 +914,34 @@ export default function Page() {
       ? bestStrategy
       : strategyRanking.find((item) => item.id === selectedStrategyId) || bestStrategy
 
+  const historicalStrategy = React.useMemo(() => {
+    if (!history.length || !selectedExpect) return currentStrategy
+
+    const targetIndex = history.findIndex(
+      (item) => String(item.expect) === String(selectedExpect)
+    )
+
+    if (targetIndex === -1) return currentStrategy
+
+    const beforeHistory = history.slice(targetIndex + 1)
+
+    if (!beforeHistory.length) return currentStrategy
+
+    const beforeRanking = buildStrategyRanking(beforeHistory)
+
+    if (!beforeRanking.length) return currentStrategy
+
+    if (selectedStrategyId === 'auto') {
+      return beforeRanking[0]
+    }
+
+    return beforeRanking.find((item) => item.id === selectedStrategyId) || beforeRanking[0]
+  }, [history, selectedExpect, selectedStrategyId, currentStrategy])
+
   const singleBacktest = buildSingleBacktest(
     history,
     selectedExpect,
-    currentStrategy
+    historicalStrategy
   )
 
   const nextAnalysis =
@@ -1296,7 +1320,7 @@ export default function Page() {
               <div className="latest-info">
                 <div>
                   <span>策略名称</span>
-                  <strong>{currentStrategy.label}</strong>
+                  <strong>{historicalStrategy?.label || currentStrategy?.label}</strong>
                 </div>
 
                 <div>
@@ -1368,7 +1392,7 @@ export default function Page() {
 
                 <div>
                   <span>算法</span>
-                  <strong>{currentStrategy.modeLabel}</strong>
+                  <strong>{historicalStrategy?.modeLabel || currentStrategy?.modeLabel}</strong>
                 </div>
               </div>
 
@@ -1570,7 +1594,7 @@ export default function Page() {
               <div>
                 <div className="card-title">选择历史回测期号</div>
                 <p className="section-desc">
-                  这里是历史回测，不是下一期推荐。选择某一期，系统会用该期之前的数据按当前策略生成36码，只判断该期最后的特码是否命中。
+                  这里是历史回测，不是下一期推荐。选择某一期，系统只会使用该期之前的数据生成36码，不会把该期开奖号码提前放进去；自动策略也会按该期之前的数据重新排名。
                 </p>
               </div>
             </div>
@@ -1601,7 +1625,7 @@ export default function Page() {
 
               <div>
                 <span>当前策略</span>
-                <strong>{currentStrategy.modeLabel}</strong>
+                <strong>{historicalStrategy?.modeLabel || currentStrategy?.modeLabel}</strong>
               </div>
 
               <div>
@@ -1837,7 +1861,7 @@ export default function Page() {
                   <div className="analysis-list">
                     <div>
                       <span>算法</span>
-                      <strong>{currentStrategy.modeLabel}</strong>
+                      <strong>{historicalStrategy?.modeLabel || currentStrategy?.modeLabel}</strong>
                     </div>
 
                     <div>
