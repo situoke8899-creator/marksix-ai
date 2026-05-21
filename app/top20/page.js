@@ -490,13 +490,19 @@ function getShortStrategyLabel(strategy) {
 }
 
 function buildTop20DrawStats(history, strategyRanking, rangeSize = 30) {
-  if (!history?.length || !strategyRanking?.length) return null
+  if (!history?.length) return null
 
-  const top20 = strategyRanking.slice(0, 20)
   const latest = history[0]
   const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
 
-  const latestStats = top20.map((strategy, index) => {
+  const latestBeforeHistory = history.slice(1)
+  const latestHistoricalRanking = latestBeforeHistory.length
+    ? buildStrategyRanking(latestBeforeHistory)
+    : strategyRanking
+
+  const latestTop20 = (latestHistoricalRanking || []).slice(0, 20)
+
+  const latestStats = latestTop20.map((strategy, index) => {
     const result = buildSingleBacktest(history, latest.expect, strategy)
 
     return {
@@ -516,14 +522,25 @@ function buildTop20DrawStats(history, strategyRanking, rangeSize = 30) {
   const hitRanks = latestStats.filter((item) => item.hit)
 
   const recentRows = history.slice(0, rangeSize).map((draw) => {
+    const targetIndex = history.findIndex(
+      (item) => String(item.expect) === String(draw.expect)
+    )
+
+    const beforeHistory = targetIndex >= 0 ? history.slice(targetIndex + 1) : []
+    const historicalRanking = beforeHistory.length
+      ? buildStrategyRanking(beforeHistory)
+      : strategyRanking
+
+    const rowTop20 = (historicalRanking || []).slice(0, 20)
     const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
 
-    const cells = top20.map((strategy, index) => {
+    const cells = rowTop20.map((strategy, index) => {
       const result = buildSingleBacktest(history, draw.expect, strategy)
 
       return {
         rank: index + 1,
         strategy,
+        strategyLabel: getShortStrategyLabel(strategy),
         hit: Boolean(result?.hit),
         hotHit: Boolean(result?.hotHit),
         coldHit: Boolean(result?.coldHit),
@@ -1487,7 +1504,7 @@ export default function Top20StatsPage() {
             </div>
             <p className="desc">
               当期特码：{formatNumber(top20DrawStats.latestSpecial)}。
-              下面统计当前策略排行榜前20名档位，每个档位筛选36码后，是否命中当期最后的特码。
+              下面统计当期开奖之前的策略排行榜前20名档位，每个档位筛选36码后，是否命中当期最后的特码。
             </p>
 
             <div className="summary-grid">
@@ -1762,9 +1779,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V2修复版】</div>
             <p className="desc">
-              每一行是一期开奖结果，每一列是当前策略排行榜前20名档位。中 = 该档位36码命中当期最后特码；未中 = 没有命中。
+              【修复版V2已生效】每一行是一期开奖结果，每一列都使用该期开奖之前的数据重新计算当时的前20名档位。中 = 该档位36码命中当期最后特码；未中 = 没有命中。
             </p>
 
             <div className="table-wrap">
@@ -1789,7 +1806,7 @@ export default function Top20StatsPage() {
                         <td
                           key={`recent-cell-${row.expect}-${cell.rank}`}
                           className={cell.hit ? 'hit-cell' : 'miss-cell'}
-                          title={cell.strategy.label}
+                          title={cell.strategyLabel || cell.strategy.label}
                         >
                           {cell.hit ? cell.status : '未中'}
                         </td>
