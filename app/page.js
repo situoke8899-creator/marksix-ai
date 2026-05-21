@@ -981,6 +981,102 @@ export default function Page() {
       ? bestStrategy
       : strategyRanking.find((item) => item.id === selectedStrategyId) || bestStrategy
 
+  const top20PageSnapshot = React.useMemo(() => {
+    if (!history.length || !strategyRanking.length) return null
+
+    const top20 = strategyRanking.slice(0, 20)
+    const latest = history[0]
+    const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
+
+    const latestStats = top20.map((strategy, index) => {
+      const result = buildSingleBacktest(history, latest.expect, strategy)
+
+      return {
+        rank: index + 1,
+        label: strategy.label,
+        strategyId: strategy.id,
+        modeLabel: strategy.modeLabel,
+        expect: latest.expect,
+        openTime: latest.openTime,
+        specialNumber: latestSpecial,
+        hit: Boolean(result?.hit),
+        hotHit: Boolean(result?.hotHit),
+        coldHit: Boolean(result?.coldHit),
+        status: result?.hotHit ? '热码命中' : result?.coldHit ? '冷码命中' : result?.hit ? '命中' : '未中',
+        strategy: {
+          id: strategy.id,
+          label: strategy.label,
+          modeLabel: strategy.modeLabel,
+          hotCount: strategy.hotCount,
+          coldCount: strategy.coldCount,
+          result100: strategy.result100
+            ? {
+                hitCount: strategy.result100.hitCount,
+                testedCount: strategy.result100.testedCount,
+                hitRate: strategy.result100.hitRate,
+              }
+            : null,
+          result50: strategy.result50
+            ? {
+                hitCount: strategy.result50.hitCount,
+                testedCount: strategy.result50.testedCount,
+                hitRate: strategy.result50.hitRate,
+              }
+            : null,
+        },
+      }
+    })
+
+    const recentRows = history.slice(0, 30).map((draw) => {
+      const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
+
+      const cells = top20.map((strategy, index) => {
+        const result = buildSingleBacktest(history, draw.expect, strategy)
+
+        return {
+          rank: index + 1,
+          strategyId: strategy.id,
+          strategyLabel: strategy.label,
+          hit: Boolean(result?.hit),
+          hotHit: Boolean(result?.hotHit),
+          coldHit: Boolean(result?.coldHit),
+          status: result?.hotHit ? '热中' : result?.coldHit ? '冷中' : result?.hit ? '中' : '未中',
+        }
+      })
+
+      return {
+        expect: draw.expect,
+        openTime: draw.openTime,
+        specialNumber,
+        cells,
+      }
+    })
+
+    return {
+      version: 'home-sync-v1',
+      play: currentPlay,
+      generatedAt: Date.now(),
+      latest,
+      latestSpecial,
+      latestStats,
+      hitRanks: latestStats.filter((item) => item.hit),
+      recentRows,
+    }
+  }, [history, strategyRanking, currentPlay])
+
+  React.useEffect(() => {
+    if (!top20PageSnapshot) return
+
+    try {
+      window.localStorage.setItem(
+        `marksix-top20-home-snapshot-${currentPlay}`,
+        JSON.stringify(top20PageSnapshot)
+      )
+    } catch (error) {
+      console.warn('保存 /top20 首页同步数据失败', error)
+    }
+  }, [top20PageSnapshot, currentPlay])
+
   const historicalStrategy = React.useMemo(() => {
     if (!history.length || !selectedExpect) return currentStrategy
 
