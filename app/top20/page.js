@@ -1111,7 +1111,7 @@ export default function Top20StatsPage() {
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
   const [totalBetPerIssue, setTotalBetPerIssue] = React.useState(3600)
-  const [odds, setOdds] = React.useState(47)
+  const [homeSnapshot, setHomeSnapshot] = React.useState(null)
 
   const playConfig = PLAY_CONFIG[currentPlay]
   const history = data?.history || []
@@ -1156,15 +1156,49 @@ export default function Top20StatsPage() {
     loadData()
   }, [loadData])
 
+  React.useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(`marksix-top20-home-snapshot-${currentPlay}`)
+
+      if (!raw) {
+        setHomeSnapshot(null)
+        return
+      }
+
+      const parsed = JSON.parse(raw)
+
+      if (parsed?.play === currentPlay && parsed?.version === 'home-sync-v1') {
+        setHomeSnapshot(parsed)
+      } else {
+        setHomeSnapshot(null)
+      }
+    } catch (error) {
+      console.warn('读取首页同步数据失败', error)
+      setHomeSnapshot(null)
+    }
+  }, [currentPlay, data])
+
   const strategyRanking = React.useMemo(() => {
     if (!history.length) return []
     return buildStrategyRanking(history)
   }, [history])
 
-  const top20DrawStats = React.useMemo(() => {
+  const computedTop20DrawStats = React.useMemo(() => {
     if (!history.length || !strategyRanking.length) return null
     return buildTop20DrawStats(history, strategyRanking, 30)
   }, [history, strategyRanking])
+
+  const top20DrawStats = React.useMemo(() => {
+    if (
+      homeSnapshot &&
+      homeSnapshot.play === currentPlay &&
+      (!history[0]?.expect || String(homeSnapshot.latest?.expect) === String(history[0]?.expect))
+    ) {
+      return homeSnapshot
+    }
+
+    return computedTop20DrawStats
+  }, [homeSnapshot, currentPlay, history, computedTop20DrawStats])
 
   const headStats = React.useMemo(() => {
     if (!history.length) return []
@@ -1765,9 +1799,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V4同步首页策略版】</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V5首页同步数据版】</div>
             <p className="desc">
-              【V4同步首页策略版已生效】第1名到第20名完全按照首页策略选择下拉框的排名抓取；首页第几名，/top20 就是第几列。
+              【V5首页同步数据版已生效】本表直接读取首页计算好的前20名中/未中结果；首页第几名，/top20 就是第几列。
             </p>
 
             <div className="table-wrap">
@@ -1792,7 +1826,7 @@ export default function Top20StatsPage() {
                         <td
                           key={`recent-cell-${row.expect}-${cell.rank}`}
                           className={cell.hit ? 'hit-cell' : 'miss-cell'}
-                          title={cell.strategyLabel || cell.strategy.label}
+                          title={cell.strategyLabel || cell.strategy?.label || ''}
                         >
                           {cell.hit ? cell.status : '未中'}
                         </td>
