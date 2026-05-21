@@ -1369,8 +1369,9 @@ export default function Page() {
           <PlaySwitch currentPlay={currentPlay} onChange={changePlay} />
 
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '14px' }}>
-            <a
-              href="/top20" onClick={(e) => { e.preventDefault(); saveTop20SnapshotAndGo() }}
+            <button
+              type="button"
+              onClick={saveTop20SnapshotAndGo}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -1382,6 +1383,8 @@ export default function Page() {
                 fontWeight: 900,
                 textDecoration: 'none',
                 boxShadow: '0 10px 24px rgba(34, 197, 94, 0.22)',
+                border: 0,
+                cursor: 'pointer',
               }}
             >
               查看20档位当期开奖统计
