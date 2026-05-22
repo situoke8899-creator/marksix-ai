@@ -273,6 +273,49 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
   }
 }
 
+
+function getTop20FreezeKey(play, expect) {
+  return `marksix-freeze-top20-${play}-${expect}`
+}
+
+function readTop20Freeze(play, expect) {
+  if (typeof window === 'undefined' || !play || !expect) return null
+  try {
+    const raw = window.localStorage.getItem(getTop20FreezeKey(play, expect))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed?.version === 'freeze-v11' && parsed?.play === play && String(parsed?.expect) === String(expect)) {
+      return parsed
+    }
+  } catch (error) {
+    console.warn('读取冻结数据失败', error)
+  }
+  return null
+}
+
+function numberItemsToNumbers(items) {
+  return (items || [])
+    .map((item) => Number(item?.num ?? item))
+    .filter((num) => Number.isInteger(num) && num >= 1 && num <= 49)
+}
+
+function makeFrozenHitCell(draw, frozenRow) {
+  const specialNumber = Number(draw?.numbers?.[draw.numbers.length - 1])
+  const recommendSet = new Set((frozenRow?.recommendNumbers || []).map(Number))
+  const hotSet = new Set((frozenRow?.hotNumbers || []).map(Number))
+  const coldSet = new Set((frozenRow?.coldNumbers || []).map(Number))
+  const hit = recommendSet.has(specialNumber)
+  const hotHit = hotSet.has(specialNumber)
+  const coldHit = coldSet.has(specialNumber)
+  return {
+    hit,
+    hotHit,
+    coldHit,
+    status: hotHit ? '热码命中' : coldHit ? '冷码命中' : hit ? '命中' : '未中',
+    shortStatus: hotHit ? '热中' : coldHit ? '冷中' : hit ? '中' : '未中',
+  }
+}
+
 function Ball({ num, count, type, small = false, hit = false, hitType = 'special' }) {
   const wave = getWave(Number(num))
 
@@ -981,6 +1024,45 @@ export default function Page() {
       ? bestStrategy
       : strategyRanking.find((item) => item.id === selectedStrategyId) || bestStrategy
 
+
+  React.useEffect(() => {
+    if (!history.length || !strategyRanking.length || !nextExpect) return
+    if (String(nextExpect).includes('等待')) return
+
+    try {
+      const key = getTop20FreezeKey(currentPlay, nextExpect)
+      if (window.localStorage.getItem(key)) return
+
+      const rows = strategyRanking.slice(0, 20).map((strategy, index) => {
+        const analysis = buildRecommendByStrategy(history, strategy)
+        return {
+          rank: index + 1,
+          strategyId: strategy.id,
+          label: strategy.label,
+          modeLabel: strategy.modeLabel,
+          recommendNumbers: numberItemsToNumbers(analysis.recommendNumbers),
+          hotNumbers: numberItemsToNumbers(analysis.hotNumbers),
+          coldNumbers: numberItemsToNumbers(analysis.coldNumbers),
+          result100: strategy.result100 || null,
+          result50: strategy.result50 || null,
+          result30: strategy.result30 || null,
+        }
+      })
+
+      window.localStorage.setItem(key, JSON.stringify({
+        version: 'freeze-v11',
+        play: currentPlay,
+        expect: nextExpect,
+        generatedAt: Date.now(),
+        basedOnLatestExpect: history[0]?.expect || '',
+        rows,
+      }))
+    } catch (error) {
+      console.warn('冻结下一期失败', error)
+    }
+  }, [history, strategyRanking, currentPlay, nextExpect])
+
+
   function saveTop20SnapshotAndGo() {
     try {
       const top20 = strategyRanking.slice(0, 20)
@@ -993,7 +1075,6 @@ export default function Page() {
 
       function makeCellByStrategy(draw, strategy, index) {
         const result = buildSingleBacktest(history, draw.expect, strategy)
-
         return {
           rank: index + 1,
           label: strategy.label,
@@ -1015,105 +1096,57 @@ export default function Page() {
             modeLabel: strategy.modeLabel,
             hotCount: strategy.hotCount,
             coldCount: strategy.coldCount,
-            result100: strategy.result100
-              ? {
-                  hitCount: strategy.result100.hitCount,
-                  testedCount: strategy.result100.testedCount,
-                  hitRate: strategy.result100.hitRate,
-                }
-              : null,
-            result50: strategy.result50
-              ? {
-                  hitCount: strategy.result50.hitCount,
-                  testedCount: strategy.result50.testedCount,
-                  hitRate: strategy.result50.hitRate,
-                }
-              : null,
-            result30: strategy.result30
-              ? {
-                  hitCount: strategy.result30.hitCount,
-                  testedCount: strategy.result30.testedCount,
-                  hitRate: strategy.result30.hitRate,
-                }
-              : null,
+            result100: strategy.result100 || null,
+            result50: strategy.result50 || null,
+            result30: strategy.result30 || null,
           },
         }
       }
 
-      function makeCellFromDetailRow(draw, detailRow, fallbackStrategy, index) {
-        if (!detailRow) {
-          return makeCellByStrategy(draw, fallbackStrategy, index)
-        }
-
-        const specialNumber = draw.numbers?.[draw.numbers.length - 1]
-
+      function makeCellFromFreeze(draw, frozenRow, fallbackStrategy, index) {
+        const frozenHit = makeFrozenHitCell(draw, frozenRow)
         return {
           rank: index + 1,
-          label: fallbackStrategy.label,
-          strategyId: fallbackStrategy.id,
-          modeLabel: fallbackStrategy.modeLabel,
-          usedStrategyId: fallbackStrategy.id,
-          usedStrategyLabel: fallbackStrategy.label,
+          label: frozenRow.label || fallbackStrategy.label,
+          strategyId: frozenRow.strategyId || fallbackStrategy.id,
+          modeLabel: frozenRow.modeLabel || fallbackStrategy.modeLabel,
+          usedStrategyId: frozenRow.strategyId || fallbackStrategy.id,
+          usedStrategyLabel: frozenRow.label || fallbackStrategy.label,
           expect: draw.expect,
           openTime: draw.openTime,
-          specialNumber,
-          hit: Boolean(detailRow.hit),
-          hotHit: Boolean(detailRow.hotHit),
-          coldHit: Boolean(detailRow.coldHit),
-          status: detailRow.hotHit ? '热码命中' : detailRow.coldHit ? '冷码命中' : detailRow.hit ? '命中' : '未中',
-          shortStatus: detailRow.hotHit ? '热中' : detailRow.coldHit ? '冷中' : detailRow.hit ? '中' : '未中',
+          specialNumber: draw.numbers?.[draw.numbers.length - 1],
+          hit: frozenHit.hit,
+          hotHit: frozenHit.hotHit,
+          coldHit: frozenHit.coldHit,
+          status: frozenHit.status,
+          shortStatus: frozenHit.shortStatus,
           strategy: {
-            id: fallbackStrategy.id,
-            label: fallbackStrategy.label,
-            modeLabel: fallbackStrategy.modeLabel,
-            hotCount: fallbackStrategy.hotCount,
-            coldCount: fallbackStrategy.coldCount,
-            result100: fallbackStrategy.result100
-              ? {
-                  hitCount: fallbackStrategy.result100.hitCount,
-                  testedCount: fallbackStrategy.result100.testedCount,
-                  hitRate: fallbackStrategy.result100.hitRate,
-                }
-              : null,
-            result50: fallbackStrategy.result50
-              ? {
-                  hitCount: fallbackStrategy.result50.hitCount,
-                  testedCount: fallbackStrategy.result50.testedCount,
-                  hitRate: fallbackStrategy.result50.hitRate,
-                }
-              : null,
-            result30: fallbackStrategy.result30
-              ? {
-                  hitCount: fallbackStrategy.result30.hitCount,
-                  testedCount: fallbackStrategy.result30.testedCount,
-                  hitRate: fallbackStrategy.result30.hitRate,
-                }
-              : null,
+            id: frozenRow.strategyId || fallbackStrategy.id,
+            label: frozenRow.label || fallbackStrategy.label,
+            modeLabel: frozenRow.modeLabel || fallbackStrategy.modeLabel,
+            result100: frozenRow.result100 || fallbackStrategy.result100 || null,
+            result50: frozenRow.result50 || fallbackStrategy.result50 || null,
+            result30: frozenRow.result30 || fallbackStrategy.result30 || null,
           },
         }
       }
 
+      const latestFreeze = readTop20Freeze(currentPlay, latest.expect)
+
       const latestStats = top20.map((strategy, index) => {
-        if (index === 0) {
-          const detailRow = best100Rows.find(
-            (row) => String(row.expect) === String(latest.expect)
-          )
-
-          return makeCellFromDetailRow(latest, detailRow, strategy, index)
-        }
-
+        const frozenRow = latestFreeze?.rows?.[index]
+        if (frozenRow) return makeCellFromFreeze(latest, frozenRow, strategy, index)
         return makeCellByStrategy(latest, strategy, index)
       })
 
       const recentRows = history.slice(0, 30).map((draw) => {
+        const freezePack = readTop20Freeze(currentPlay, draw.expect)
         const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
-        const detailRow = best100Rows.find(
-          (row) => String(row.expect) === String(draw.expect)
-        )
 
         const cells = top20.map((strategy, index) => {
-          const cell = index === 0
-            ? makeCellFromDetailRow(draw, detailRow, strategy, index)
+          const frozenRow = freezePack?.rows?.[index]
+          const cell = frozenRow
+            ? makeCellFromFreeze(draw, frozenRow, strategy, index)
             : makeCellByStrategy(draw, strategy, index)
 
           return {
@@ -1138,7 +1171,7 @@ export default function Page() {
       })
 
       const snapshot = {
-        version: 'home-sync-v10-first-column-detail-table',
+        version: 'home-sync-v11-freeze-future',
         play: currentPlay,
         generatedAt: Date.now(),
         latest,
@@ -1223,8 +1256,24 @@ export default function Page() {
     return buildFixedStrategyBacktestResult(history, historicalStrategy, 50)
   }, [history, historicalStrategy])
 
-  const best100Rows = detailBacktest100?.rows || []
-  const best50Rows = detailBacktest50?.rows || []
+
+  function applyFrozenFirstRank(rows) {
+    return (rows || []).map((row) => {
+      const target = history.find((item) => String(item.expect) === String(row.expect))
+      const frozenFirst = readTop20Freeze(currentPlay, row.expect)?.rows?.[0]
+      if (!target || !frozenFirst) return row
+      const frozenHit = makeFrozenHitCell(target, frozenFirst)
+      return {
+        ...row,
+        hit: frozenHit.hit,
+        hotHit: frozenHit.hotHit,
+        coldHit: frozenHit.coldHit,
+      }
+    })
+  }
+
+  const best100Rows = applyFrozenFirstRank(detailBacktest100?.rows || [])
+  const best50Rows = applyFrozenFirstRank(detailBacktest50?.rows || [])
 
   const recommendNumbers = singleBacktest?.recommendNumbers || []
   const hotNumbers = singleBacktest?.hotNumbers || []
