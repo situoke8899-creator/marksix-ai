@@ -1025,44 +1025,6 @@ export default function Page() {
       : strategyRanking.find((item) => item.id === selectedStrategyId) || bestStrategy
 
 
-  React.useEffect(() => {
-    if (!history.length || !strategyRanking.length || !nextExpect) return
-    if (String(nextExpect).includes('等待')) return
-
-    try {
-      const key = getTop20FreezeKey(currentPlay, nextExpect)
-      if (window.localStorage.getItem(key)) return
-
-      const rows = strategyRanking.slice(0, 20).map((strategy, index) => {
-        const analysis = buildRecommendByStrategy(history, strategy)
-        return {
-          rank: index + 1,
-          strategyId: strategy.id,
-          label: strategy.label,
-          modeLabel: strategy.modeLabel,
-          recommendNumbers: numberItemsToNumbers(analysis.recommendNumbers),
-          hotNumbers: numberItemsToNumbers(analysis.hotNumbers),
-          coldNumbers: numberItemsToNumbers(analysis.coldNumbers),
-          result100: strategy.result100 || null,
-          result50: strategy.result50 || null,
-          result30: strategy.result30 || null,
-        }
-      })
-
-      window.localStorage.setItem(key, JSON.stringify({
-        version: 'freeze-v11',
-        play: currentPlay,
-        expect: nextExpect,
-        generatedAt: Date.now(),
-        basedOnLatestExpect: history[0]?.expect || '',
-        rows,
-      }))
-    } catch (error) {
-      console.warn('冻结下一期失败', error)
-    }
-  }, [history, strategyRanking, currentPlay, nextExpect])
-
-
   function saveTop20SnapshotAndGo() {
     try {
       const top20 = strategyRanking.slice(0, 20)
@@ -1228,6 +1190,45 @@ export default function Page() {
       : null
 
   const nextExpect = getNextExpectByPlay(history, data, currentPlay)
+
+  React.useEffect(() => {
+    if (!history.length || !strategyRanking.length || !nextExpect) return
+    if (String(nextExpect).includes('等待')) return
+
+    try {
+      const key = getTop20FreezeKey(currentPlay, nextExpect)
+      if (window.localStorage.getItem(key)) return
+
+      const rows = strategyRanking.slice(0, 20).map((strategy, index) => {
+        const analysis = buildRecommendByStrategy(history, strategy)
+        return {
+          rank: index + 1,
+          strategyId: strategy.id,
+          label: strategy.label,
+          modeLabel: strategy.modeLabel,
+          recommendNumbers: numberItemsToNumbers(analysis.recommendNumbers),
+          hotNumbers: numberItemsToNumbers(analysis.hotNumbers),
+          coldNumbers: numberItemsToNumbers(analysis.coldNumbers),
+          result100: strategy.result100 || null,
+          result50: strategy.result50 || null,
+          result30: strategy.result30 || null,
+        }
+      })
+
+      window.localStorage.setItem(key, JSON.stringify({
+        version: 'freeze-v11',
+        play: currentPlay,
+        expect: nextExpect,
+        generatedAt: Date.now(),
+        basedOnLatestExpect: history[0]?.expect || '',
+        rows,
+      }))
+    } catch (error) {
+      console.warn('冻结下一期失败', error)
+    }
+  }, [history, strategyRanking, currentPlay, nextExpect])
+
+
 
   const nextRecommendNumbers = nextAnalysis?.recommendNumbers || []
   const nextHotNumbers = nextAnalysis?.hotNumbers || []
