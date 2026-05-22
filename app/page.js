@@ -148,7 +148,7 @@ function DetailBacktestTable({ title, rows, limit = 100 }) {
     <section className="card">
       <div className="card-title">{title}</div>
       <p className="section-desc">
-        表格按开奖站样式展示，号码显示波色与生肖。每一期的36码会按首次生成时冻结保存；今天开23未中，明天新增开奖后仍然显示未中。黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
+        表格按开奖站样式展示，号码显示波色与生肖。每一行都会使用该期之前的数据重新生成36码；黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
       </p>
 
       <div className="detail-table-wrap">
@@ -272,291 +272,6 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
     roi,
   }
 }
-
-
-function getTop20FreezeKey(play, expect) {
-  return `marksix-freeze-top20-${play}-${expect}`
-}
-
-function readTop20Freeze(play, expect) {
-  if (typeof window === 'undefined' || !play || !expect) return null
-  try {
-    const raw = window.localStorage.getItem(getTop20FreezeKey(play, expect))
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    if (parsed?.version === 'freeze-v11' && parsed?.play === play && String(parsed?.expect) === String(expect)) {
-      return parsed
-    }
-  } catch (error) {
-    console.warn('读取冻结数据失败', error)
-  }
-  return null
-}
-
-function numberItemsToNumbers(items) {
-  return (items || [])
-    .map((item) => Number(item?.num ?? item))
-    .filter((num) => Number.isInteger(num) && num >= 1 && num <= 49)
-}
-
-function makeFrozenHitCell(draw, frozenRow) {
-  const specialNumber = Number(draw?.numbers?.[draw.numbers.length - 1])
-  const recommendSet = new Set((frozenRow?.recommendNumbers || []).map(Number))
-  const hotSet = new Set((frozenRow?.hotNumbers || []).map(Number))
-  const coldSet = new Set((frozenRow?.coldNumbers || []).map(Number))
-  const hit = recommendSet.has(specialNumber)
-  const hotHit = hotSet.has(specialNumber)
-  const coldHit = coldSet.has(specialNumber)
-  return {
-    hit,
-    hotHit,
-    coldHit,
-    status: hotHit ? '热码命中' : coldHit ? '冷码命中' : hit ? '命中' : '未中',
-    shortStatus: hotHit ? '热中' : coldHit ? '冷中' : hit ? '中' : '未中',
-  }
-}
-
-
-function getDetailFreezeKey(play, strategyId, expect) {
-  return `marksix-freeze-detail-v13-${play}-${strategyId || 'auto'}-${expect}`
-}
-
-function makeStoredDetailRow({ play, strategyId, expect, strategy, analysis }) {
-  return {
-    version: 'detail-freeze-v13',
-    play,
-    strategyId: strategyId || 'auto',
-    expect,
-    generatedAt: Date.now(),
-    usedStrategyId: strategy?.id || '',
-    usedStrategyLabel: strategy?.label || '',
-    recommendNumbers: numberItemsToNumbers(analysis?.recommendNumbers),
-    hotNumbers: numberItemsToNumbers(analysis?.hotNumbers),
-    coldNumbers: numberItemsToNumbers(analysis?.coldNumbers),
-  }
-}
-
-function readDetailFreeze(play, strategyId, expect) {
-  if (typeof window === 'undefined' || !play || !expect) return null
-
-  try {
-    const raw = window.localStorage.getItem(getDetailFreezeKey(play, strategyId, expect))
-    if (!raw) return null
-
-    const parsed = JSON.parse(raw)
-
-    if (
-      parsed?.version === 'detail-freeze-v13' &&
-      parsed?.play === play &&
-      parsed?.strategyId === (strategyId || 'auto') &&
-      String(parsed?.expect) === String(expect)
-    ) {
-      return parsed
-    }
-  } catch (error) {
-    console.warn('读取近100期冻结数据失败', error)
-  }
-
-  return null
-}
-
-function writeDetailFreeze(play, strategyId, expect, strategy, analysis) {
-  if (typeof window === 'undefined' || !play || !expect || !strategy || !analysis) return null
-
-  try {
-    const key = getDetailFreezeKey(play, strategyId, expect)
-    const existed = window.localStorage.getItem(key)
-
-    // 关键：已经保存过的期号，永远不覆盖
-    if (existed) {
-      return readDetailFreeze(play, strategyId, expect)
-    }
-
-    const stored = makeStoredDetailRow({
-      play,
-      strategyId,
-      expect,
-      strategy,
-      analysis,
-    })
-
-    window.localStorage.setItem(key, JSON.stringify(stored))
-    return stored
-  } catch (error) {
-    console.warn('写入近100期冻结数据失败', error)
-  }
-
-  return null
-}
-
-function makeRowFromStoredDetail(target, stored) {
-  const specialNumber = target.numbers[target.numbers.length - 1]
-  const recommendNumbers = (stored?.recommendNumbers || []).map((num) => ({
-    num: Number(num),
-    count: 0,
-    type: 'hot',
-  }))
-  const hotNumbers = (stored?.hotNumbers || []).map((num) => ({
-    num: Number(num),
-    count: 0,
-    type: 'hot',
-  }))
-  const coldNumbers = (stored?.coldNumbers || []).map((num) => ({
-    num: Number(num),
-    count: 0,
-    type: 'cold',
-  }))
-
-  const recommendSet = new Set(recommendNumbers.map((item) => item.num))
-  const hotSet = new Set(hotNumbers.map((item) => item.num))
-  const coldSet = new Set(coldNumbers.map((item) => item.num))
-
-  const hit = recommendSet.has(Number(specialNumber))
-  const hotHit = hotSet.has(Number(specialNumber))
-  const coldHit = coldSet.has(Number(specialNumber))
-
-  return {
-    expect: target.expect,
-    openTime: target.openTime,
-    numbers: target.numbers,
-    specialNumber,
-    hit,
-    hotHit,
-    coldHit,
-    recommendNumbers,
-    hotNumbers,
-    coldNumbers,
-    usedStrategyId: stored?.usedStrategyId || '',
-    usedStrategyLabel: stored?.usedStrategyLabel || '',
-    isFrozen: true,
-  }
-}
-
-function summarizeBacktestRows(rows = []) {
-  const testedCount = rows.length
-  const hitCount = rows.filter((item) => item.hit).length
-  const hotHitCount = rows.filter((item) => item.hotHit).length
-  const coldHitCount = rows.filter((item) => item.coldHit).length
-
-  const hitRate = testedCount ? Number(((hitCount / testedCount) * 100).toFixed(2)) : 0
-  const hotHitRate = testedCount ? Number(((hotHitCount / testedCount) * 100).toFixed(2)) : 0
-  const coldHitRate = testedCount ? Number(((coldHitCount / testedCount) * 100).toFixed(2)) : 0
-
-  return {
-    testedCount,
-    hitCount,
-    hotHitCount,
-    coldHitCount,
-    hitRate,
-    hotHitRate,
-    coldHitRate,
-    rows,
-  }
-}
-
-function buildStableDetailBacktestResult(history, selectedStrategyId = 'auto', currentPlay = 'macau', rangeSize = 100) {
-  const rows = []
-  const strategyId = selectedStrategyId || 'auto'
-
-  if (!history?.length) return summarizeBacktestRows(rows)
-
-  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
-    const target = history[index]
-    const frozen = readDetailFreeze(currentPlay, strategyId, target.expect)
-
-    if (frozen) {
-      rows.push(makeRowFromStoredDetail(target, frozen))
-      continue
-    }
-
-    const beforeHistory = history.slice(index + 1)
-
-    if (!beforeHistory.length) continue
-
-    const beforeRanking = buildStrategyRanking(beforeHistory)
-
-    if (!beforeRanking.length) continue
-
-    const strategy =
-      strategyId === 'auto'
-        ? beforeRanking[0]
-        : beforeRanking.find((item) => item.id === strategyId) || beforeRanking[0]
-
-    if (!strategy || beforeHistory.length < getRequiredSampleSize(strategy)) continue
-
-    const analysis = buildRecommendByStrategy(beforeHistory, strategy)
-    const stored = writeDetailFreeze(currentPlay, strategyId, target.expect, strategy, analysis)
-
-    if (stored) {
-      rows.push(makeRowFromStoredDetail(target, stored))
-      continue
-    }
-
-    const specialNumber = target.numbers[target.numbers.length - 1]
-    const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
-    const hotSet = new Set(analysis.hotNumbers.map((item) => item.num))
-    const coldSet = new Set(analysis.coldNumbers.map((item) => item.num))
-
-    const hit = recommendSet.has(specialNumber)
-    const hotHit = hotSet.has(specialNumber)
-    const coldHit = coldSet.has(specialNumber)
-
-    rows.push({
-      expect: target.expect,
-      openTime: target.openTime,
-      numbers: target.numbers,
-      specialNumber,
-      hit,
-      hotHit,
-      coldHit,
-      usedStrategyId: strategy.id,
-      usedStrategyLabel: strategy.label,
-      ...analysis,
-    })
-  }
-
-  return summarizeBacktestRows(rows)
-}
-
-function freezeNextDetailRows(history, strategyRanking, currentPlay, nextExpect) {
-  if (typeof window === 'undefined') return
-  if (!history?.length || !strategyRanking?.length || !nextExpect) return
-  if (String(nextExpect).includes('等待')) return
-
-  try {
-    const targets = [
-      {
-        strategyId: 'auto',
-        strategy: strategyRanking[0],
-      },
-      ...strategyRanking.slice(0, 20).map((strategy) => ({
-        strategyId: strategy.id,
-        strategy,
-      })),
-    ]
-
-    targets.forEach(({ strategyId, strategy }) => {
-      if (!strategy) return
-
-      const key = getDetailFreezeKey(currentPlay, strategyId, nextExpect)
-      if (window.localStorage.getItem(key)) return
-
-      const analysis = buildRecommendByStrategy(history, strategy)
-      const stored = makeStoredDetailRow({
-        play: currentPlay,
-        strategyId,
-        expect: nextExpect,
-        strategy,
-        analysis,
-      })
-
-      window.localStorage.setItem(key, JSON.stringify(stored))
-    })
-  } catch (error) {
-    console.warn('冻结下一期近100期回测数据失败', error)
-  }
-}
-
 
 function Ball({ num, count, type, small = false, hit = false, hitType = 'special' }) {
   const wave = getWave(Number(num))
@@ -1266,7 +981,6 @@ export default function Page() {
       ? bestStrategy
       : strategyRanking.find((item) => item.id === selectedStrategyId) || bestStrategy
 
-
   function saveTop20SnapshotAndGo() {
     try {
       const top20 = strategyRanking.slice(0, 20)
@@ -1279,6 +993,7 @@ export default function Page() {
 
       function makeCellByStrategy(draw, strategy, index) {
         const result = buildSingleBacktest(history, draw.expect, strategy)
+
         return {
           rank: index + 1,
           label: strategy.label,
@@ -1300,57 +1015,105 @@ export default function Page() {
             modeLabel: strategy.modeLabel,
             hotCount: strategy.hotCount,
             coldCount: strategy.coldCount,
-            result100: strategy.result100 || null,
-            result50: strategy.result50 || null,
-            result30: strategy.result30 || null,
+            result100: strategy.result100
+              ? {
+                  hitCount: strategy.result100.hitCount,
+                  testedCount: strategy.result100.testedCount,
+                  hitRate: strategy.result100.hitRate,
+                }
+              : null,
+            result50: strategy.result50
+              ? {
+                  hitCount: strategy.result50.hitCount,
+                  testedCount: strategy.result50.testedCount,
+                  hitRate: strategy.result50.hitRate,
+                }
+              : null,
+            result30: strategy.result30
+              ? {
+                  hitCount: strategy.result30.hitCount,
+                  testedCount: strategy.result30.testedCount,
+                  hitRate: strategy.result30.hitRate,
+                }
+              : null,
           },
         }
       }
 
-      function makeCellFromFreeze(draw, frozenRow, fallbackStrategy, index) {
-        const frozenHit = makeFrozenHitCell(draw, frozenRow)
+      function makeCellFromDetailRow(draw, detailRow, fallbackStrategy, index) {
+        if (!detailRow) {
+          return makeCellByStrategy(draw, fallbackStrategy, index)
+        }
+
+        const specialNumber = draw.numbers?.[draw.numbers.length - 1]
+
         return {
           rank: index + 1,
-          label: frozenRow.label || fallbackStrategy.label,
-          strategyId: frozenRow.strategyId || fallbackStrategy.id,
-          modeLabel: frozenRow.modeLabel || fallbackStrategy.modeLabel,
-          usedStrategyId: frozenRow.strategyId || fallbackStrategy.id,
-          usedStrategyLabel: frozenRow.label || fallbackStrategy.label,
+          label: fallbackStrategy.label,
+          strategyId: fallbackStrategy.id,
+          modeLabel: fallbackStrategy.modeLabel,
+          usedStrategyId: fallbackStrategy.id,
+          usedStrategyLabel: fallbackStrategy.label,
           expect: draw.expect,
           openTime: draw.openTime,
-          specialNumber: draw.numbers?.[draw.numbers.length - 1],
-          hit: frozenHit.hit,
-          hotHit: frozenHit.hotHit,
-          coldHit: frozenHit.coldHit,
-          status: frozenHit.status,
-          shortStatus: frozenHit.shortStatus,
+          specialNumber,
+          hit: Boolean(detailRow.hit),
+          hotHit: Boolean(detailRow.hotHit),
+          coldHit: Boolean(detailRow.coldHit),
+          status: detailRow.hotHit ? '热码命中' : detailRow.coldHit ? '冷码命中' : detailRow.hit ? '命中' : '未中',
+          shortStatus: detailRow.hotHit ? '热中' : detailRow.coldHit ? '冷中' : detailRow.hit ? '中' : '未中',
           strategy: {
-            id: frozenRow.strategyId || fallbackStrategy.id,
-            label: frozenRow.label || fallbackStrategy.label,
-            modeLabel: frozenRow.modeLabel || fallbackStrategy.modeLabel,
-            result100: frozenRow.result100 || fallbackStrategy.result100 || null,
-            result50: frozenRow.result50 || fallbackStrategy.result50 || null,
-            result30: frozenRow.result30 || fallbackStrategy.result30 || null,
+            id: fallbackStrategy.id,
+            label: fallbackStrategy.label,
+            modeLabel: fallbackStrategy.modeLabel,
+            hotCount: fallbackStrategy.hotCount,
+            coldCount: fallbackStrategy.coldCount,
+            result100: fallbackStrategy.result100
+              ? {
+                  hitCount: fallbackStrategy.result100.hitCount,
+                  testedCount: fallbackStrategy.result100.testedCount,
+                  hitRate: fallbackStrategy.result100.hitRate,
+                }
+              : null,
+            result50: fallbackStrategy.result50
+              ? {
+                  hitCount: fallbackStrategy.result50.hitCount,
+                  testedCount: fallbackStrategy.result50.testedCount,
+                  hitRate: fallbackStrategy.result50.hitRate,
+                }
+              : null,
+            result30: fallbackStrategy.result30
+              ? {
+                  hitCount: fallbackStrategy.result30.hitCount,
+                  testedCount: fallbackStrategy.result30.testedCount,
+                  hitRate: fallbackStrategy.result30.hitRate,
+                }
+              : null,
           },
         }
       }
 
-      const latestFreeze = readTop20Freeze(currentPlay, latest.expect)
-
       const latestStats = top20.map((strategy, index) => {
-        const frozenRow = latestFreeze?.rows?.[index]
-        if (frozenRow) return makeCellFromFreeze(latest, frozenRow, strategy, index)
+        if (index === 0) {
+          const detailRow = best100Rows.find(
+            (row) => String(row.expect) === String(latest.expect)
+          )
+
+          return makeCellFromDetailRow(latest, detailRow, strategy, index)
+        }
+
         return makeCellByStrategy(latest, strategy, index)
       })
 
       const recentRows = history.slice(0, 30).map((draw) => {
-        const freezePack = readTop20Freeze(currentPlay, draw.expect)
         const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
+        const detailRow = best100Rows.find(
+          (row) => String(row.expect) === String(draw.expect)
+        )
 
         const cells = top20.map((strategy, index) => {
-          const frozenRow = freezePack?.rows?.[index]
-          const cell = frozenRow
-            ? makeCellFromFreeze(draw, frozenRow, strategy, index)
+          const cell = index === 0
+            ? makeCellFromDetailRow(draw, detailRow, strategy, index)
             : makeCellByStrategy(draw, strategy, index)
 
           return {
@@ -1375,7 +1138,7 @@ export default function Page() {
       })
 
       const snapshot = {
-        version: 'home-sync-v11-freeze-future',
+        version: 'home-sync-v10-first-column-detail-table',
         play: currentPlay,
         generatedAt: Date.now(),
         latest,
@@ -1433,47 +1196,6 @@ export default function Page() {
 
   const nextExpect = getNextExpectByPlay(history, data, currentPlay)
 
-  React.useEffect(() => {
-    if (!history.length || !strategyRanking.length || !nextExpect) return
-    if (String(nextExpect).includes('等待')) return
-
-    try {
-      const key = getTop20FreezeKey(currentPlay, nextExpect)
-      if (window.localStorage.getItem(key)) return
-
-      const rows = strategyRanking.slice(0, 20).map((strategy, index) => {
-        const analysis = buildRecommendByStrategy(history, strategy)
-        return {
-          rank: index + 1,
-          strategyId: strategy.id,
-          label: strategy.label,
-          modeLabel: strategy.modeLabel,
-          recommendNumbers: numberItemsToNumbers(analysis.recommendNumbers),
-          hotNumbers: numberItemsToNumbers(analysis.hotNumbers),
-          coldNumbers: numberItemsToNumbers(analysis.coldNumbers),
-          result100: strategy.result100 || null,
-          result50: strategy.result50 || null,
-          result30: strategy.result30 || null,
-        }
-      })
-
-      window.localStorage.setItem(key, JSON.stringify({
-        version: 'freeze-v11',
-        play: currentPlay,
-        expect: nextExpect,
-        generatedAt: Date.now(),
-        basedOnLatestExpect: history[0]?.expect || '',
-        rows,
-      }))
-
-      freezeNextDetailRows(history, strategyRanking, currentPlay, nextExpect)
-    } catch (error) {
-      console.warn('冻结下一期失败', error)
-    }
-  }, [history, strategyRanking, currentPlay, nextExpect])
-
-
-
   const nextRecommendNumbers = nextAnalysis?.recommendNumbers || []
   const nextHotNumbers = nextAnalysis?.hotNumbers || []
   const nextColdNumbers = nextAnalysis?.coldNumbers || []
@@ -1492,14 +1214,14 @@ export default function Page() {
   ].join('\n')
 
   const detailBacktest100 = React.useMemo(() => {
-    if (!history.length) return null
-    return buildStableDetailBacktestResult(history, selectedStrategyId, currentPlay, 100)
-  }, [history, selectedStrategyId, currentPlay])
+    if (!history.length || !historicalStrategy) return null
+    return buildFixedStrategyBacktestResult(history, historicalStrategy, 100)
+  }, [history, historicalStrategy])
 
   const detailBacktest50 = React.useMemo(() => {
-    if (!detailBacktest100?.rows?.length) return null
-    return summarizeBacktestRows(detailBacktest100.rows.slice(0, 50))
-  }, [detailBacktest100])
+    if (!history.length || !historicalStrategy) return null
+    return buildFixedStrategyBacktestResult(history, historicalStrategy, 50)
+  }, [history, historicalStrategy])
 
   const best100Rows = detailBacktest100?.rows || []
   const best50Rows = detailBacktest50?.rows || []
