@@ -148,7 +148,7 @@ function DetailBacktestTable({ title, rows, limit = 100 }) {
     <section className="card">
       <div className="card-title">{title}</div>
       <p className="section-desc">
-        表格按开奖站样式展示，号码显示波色与生肖。每一行都会使用该期之前的数据重新生成36码；黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
+        表格按开奖站样式展示，号码显示波色与生肖。每一行都独立使用该期开奖之前的数据重新生成36码；后面新增开奖不会反向改写旧期结果。黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
       </p>
 
       <div className="detail-table-wrap">
@@ -270,49 +270,6 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
     totalReturn,
     profit,
     roi,
-  }
-}
-
-
-function getTop20FreezeKey(play, expect) {
-  return `marksix-freeze-top20-${play}-${expect}`
-}
-
-function readTop20Freeze(play, expect) {
-  if (typeof window === 'undefined' || !play || !expect) return null
-  try {
-    const raw = window.localStorage.getItem(getTop20FreezeKey(play, expect))
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    if (parsed?.version === 'freeze-v11' && parsed?.play === play && String(parsed?.expect) === String(expect)) {
-      return parsed
-    }
-  } catch (error) {
-    console.warn('读取冻结数据失败', error)
-  }
-  return null
-}
-
-function numberItemsToNumbers(items) {
-  return (items || [])
-    .map((item) => Number(item?.num ?? item))
-    .filter((num) => Number.isInteger(num) && num >= 1 && num <= 49)
-}
-
-function makeFrozenHitCell(draw, frozenRow) {
-  const specialNumber = Number(draw?.numbers?.[draw.numbers.length - 1])
-  const recommendSet = new Set((frozenRow?.recommendNumbers || []).map(Number))
-  const hotSet = new Set((frozenRow?.hotNumbers || []).map(Number))
-  const coldSet = new Set((frozenRow?.coldNumbers || []).map(Number))
-  const hit = recommendSet.has(specialNumber)
-  const hotHit = hotSet.has(specialNumber)
-  const coldHit = coldSet.has(specialNumber)
-  return {
-    hit,
-    hotHit,
-    coldHit,
-    status: hotHit ? '热码命中' : coldHit ? '冷码命中' : hit ? '命中' : '未中',
-    shortStatus: hotHit ? '热中' : coldHit ? '冷中' : hit ? '中' : '未中',
   }
 }
 
@@ -874,6 +831,79 @@ function buildFixedStrategyBacktestResult(history, strategy, rangeSize = 100) {
   }
 }
 
+
+function summarizeBacktestRows(rows = []) {
+  const testedCount = rows.length
+  const hitCount = rows.filter((item) => item.hit).length
+  const hotHitCount = rows.filter((item) => item.hotHit).length
+  const coldHitCount = rows.filter((item) => item.coldHit).length
+
+  const hitRate = testedCount ? Number(((hitCount / testedCount) * 100).toFixed(2)) : 0
+  const hotHitRate = testedCount ? Number(((hotHitCount / testedCount) * 100).toFixed(2)) : 0
+  const coldHitRate = testedCount ? Number(((coldHitCount / testedCount) * 100).toFixed(2)) : 0
+
+  return {
+    testedCount,
+    hitCount,
+    hotHitCount,
+    coldHitCount,
+    hitRate,
+    hotHitRate,
+    coldHitRate,
+    rows,
+  }
+}
+
+function buildRollingHistoricalBacktestResult(history, selectedStrategyId = 'auto', rangeSize = 100) {
+  const rows = []
+
+  if (!history?.length) return summarizeBacktestRows(rows)
+
+  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
+    const target = history[index]
+    const beforeHistory = history.slice(index + 1)
+
+    if (!beforeHistory.length) continue
+
+    const beforeRanking = buildStrategyRanking(beforeHistory)
+
+    if (!beforeRanking.length) continue
+
+    const strategy =
+      selectedStrategyId === 'auto'
+        ? beforeRanking[0]
+        : beforeRanking.find((item) => item.id === selectedStrategyId) || beforeRanking[0]
+
+    if (!strategy || beforeHistory.length < getRequiredSampleSize(strategy)) continue
+
+    const analysis = buildRecommendByStrategy(beforeHistory, strategy)
+    const specialNumber = target.numbers[target.numbers.length - 1]
+
+    const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
+    const hotSet = new Set(analysis.hotNumbers.map((item) => item.num))
+    const coldSet = new Set(analysis.coldNumbers.map((item) => item.num))
+
+    const hit = recommendSet.has(specialNumber)
+    const hotHit = hotSet.has(specialNumber)
+    const coldHit = coldSet.has(specialNumber)
+
+    rows.push({
+      expect: target.expect,
+      openTime: target.openTime,
+      numbers: target.numbers,
+      specialNumber,
+      hit,
+      hotHit,
+      coldHit,
+      usedStrategyId: strategy.id,
+      usedStrategyLabel: strategy.label,
+      ...analysis,
+    })
+  }
+
+  return summarizeBacktestRows(rows)
+}
+
 function copyToClipboard(text) {
   if (!text) {
     alert('没有可复制的号码')
@@ -1024,136 +1054,6 @@ export default function Page() {
       ? bestStrategy
       : strategyRanking.find((item) => item.id === selectedStrategyId) || bestStrategy
 
-
-  function saveTop20SnapshotAndGo() {
-    try {
-      const top20 = strategyRanking.slice(0, 20)
-      const latest = history[0]
-
-      if (!latest || !top20.length) {
-        window.location.href = '/top20'
-        return
-      }
-
-      function makeCellByStrategy(draw, strategy, index) {
-        const result = buildSingleBacktest(history, draw.expect, strategy)
-        return {
-          rank: index + 1,
-          label: strategy.label,
-          strategyId: strategy.id,
-          modeLabel: strategy.modeLabel,
-          usedStrategyId: strategy.id,
-          usedStrategyLabel: strategy.label,
-          expect: draw.expect,
-          openTime: draw.openTime,
-          specialNumber: draw.numbers?.[draw.numbers.length - 1],
-          hit: Boolean(result?.hit),
-          hotHit: Boolean(result?.hotHit),
-          coldHit: Boolean(result?.coldHit),
-          status: result?.hotHit ? '热码命中' : result?.coldHit ? '冷码命中' : result?.hit ? '命中' : '未中',
-          shortStatus: result?.hotHit ? '热中' : result?.coldHit ? '冷中' : result?.hit ? '中' : '未中',
-          strategy: {
-            id: strategy.id,
-            label: strategy.label,
-            modeLabel: strategy.modeLabel,
-            hotCount: strategy.hotCount,
-            coldCount: strategy.coldCount,
-            result100: strategy.result100 || null,
-            result50: strategy.result50 || null,
-            result30: strategy.result30 || null,
-          },
-        }
-      }
-
-      function makeCellFromFreeze(draw, frozenRow, fallbackStrategy, index) {
-        const frozenHit = makeFrozenHitCell(draw, frozenRow)
-        return {
-          rank: index + 1,
-          label: frozenRow.label || fallbackStrategy.label,
-          strategyId: frozenRow.strategyId || fallbackStrategy.id,
-          modeLabel: frozenRow.modeLabel || fallbackStrategy.modeLabel,
-          usedStrategyId: frozenRow.strategyId || fallbackStrategy.id,
-          usedStrategyLabel: frozenRow.label || fallbackStrategy.label,
-          expect: draw.expect,
-          openTime: draw.openTime,
-          specialNumber: draw.numbers?.[draw.numbers.length - 1],
-          hit: frozenHit.hit,
-          hotHit: frozenHit.hotHit,
-          coldHit: frozenHit.coldHit,
-          status: frozenHit.status,
-          shortStatus: frozenHit.shortStatus,
-          strategy: {
-            id: frozenRow.strategyId || fallbackStrategy.id,
-            label: frozenRow.label || fallbackStrategy.label,
-            modeLabel: frozenRow.modeLabel || fallbackStrategy.modeLabel,
-            result100: frozenRow.result100 || fallbackStrategy.result100 || null,
-            result50: frozenRow.result50 || fallbackStrategy.result50 || null,
-            result30: frozenRow.result30 || fallbackStrategy.result30 || null,
-          },
-        }
-      }
-
-      const latestFreeze = readTop20Freeze(currentPlay, latest.expect)
-
-      const latestStats = top20.map((strategy, index) => {
-        const frozenRow = latestFreeze?.rows?.[index]
-        if (frozenRow) return makeCellFromFreeze(latest, frozenRow, strategy, index)
-        return makeCellByStrategy(latest, strategy, index)
-      })
-
-      const recentRows = history.slice(0, 30).map((draw) => {
-        const freezePack = readTop20Freeze(currentPlay, draw.expect)
-        const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
-
-        const cells = top20.map((strategy, index) => {
-          const frozenRow = freezePack?.rows?.[index]
-          const cell = frozenRow
-            ? makeCellFromFreeze(draw, frozenRow, strategy, index)
-            : makeCellByStrategy(draw, strategy, index)
-
-          return {
-            rank: cell.rank,
-            strategyId: cell.strategyId,
-            strategyLabel: cell.label,
-            usedStrategyId: cell.usedStrategyId,
-            usedStrategyLabel: cell.usedStrategyLabel,
-            hit: cell.hit,
-            hotHit: cell.hotHit,
-            coldHit: cell.coldHit,
-            status: cell.shortStatus,
-          }
-        })
-
-        return {
-          expect: draw.expect,
-          openTime: draw.openTime,
-          specialNumber,
-          cells,
-        }
-      })
-
-      const snapshot = {
-        version: 'home-sync-v11-freeze-future',
-        play: currentPlay,
-        generatedAt: Date.now(),
-        latest,
-        latestSpecial: latest.numbers?.[latest.numbers.length - 1],
-        latestStats,
-        hitRanks: latestStats.filter((item) => item.hit),
-        recentRows,
-      }
-
-      window.localStorage.setItem(
-        `marksix-top20-home-snapshot-${currentPlay}`,
-        JSON.stringify(snapshot)
-      )
-    } catch (error) {
-      console.warn('保存 /top20 同步数据失败', error)
-    }
-
-    window.location.href = '/top20'
-  }
-
   const historicalStrategy = React.useMemo(() => {
     if (!history.length || !selectedExpect) return currentStrategy
 
@@ -1191,45 +1091,6 @@ export default function Page() {
 
   const nextExpect = getNextExpectByPlay(history, data, currentPlay)
 
-  React.useEffect(() => {
-    if (!history.length || !strategyRanking.length || !nextExpect) return
-    if (String(nextExpect).includes('等待')) return
-
-    try {
-      const key = getTop20FreezeKey(currentPlay, nextExpect)
-      if (window.localStorage.getItem(key)) return
-
-      const rows = strategyRanking.slice(0, 20).map((strategy, index) => {
-        const analysis = buildRecommendByStrategy(history, strategy)
-        return {
-          rank: index + 1,
-          strategyId: strategy.id,
-          label: strategy.label,
-          modeLabel: strategy.modeLabel,
-          recommendNumbers: numberItemsToNumbers(analysis.recommendNumbers),
-          hotNumbers: numberItemsToNumbers(analysis.hotNumbers),
-          coldNumbers: numberItemsToNumbers(analysis.coldNumbers),
-          result100: strategy.result100 || null,
-          result50: strategy.result50 || null,
-          result30: strategy.result30 || null,
-        }
-      })
-
-      window.localStorage.setItem(key, JSON.stringify({
-        version: 'freeze-v11',
-        play: currentPlay,
-        expect: nextExpect,
-        generatedAt: Date.now(),
-        basedOnLatestExpect: history[0]?.expect || '',
-        rows,
-      }))
-    } catch (error) {
-      console.warn('冻结下一期失败', error)
-    }
-  }, [history, strategyRanking, currentPlay, nextExpect])
-
-
-
   const nextRecommendNumbers = nextAnalysis?.recommendNumbers || []
   const nextHotNumbers = nextAnalysis?.hotNumbers || []
   const nextColdNumbers = nextAnalysis?.coldNumbers || []
@@ -1248,33 +1109,17 @@ export default function Page() {
   ].join('\n')
 
   const detailBacktest100 = React.useMemo(() => {
-    if (!history.length || !historicalStrategy) return null
-    return buildFixedStrategyBacktestResult(history, historicalStrategy, 100)
-  }, [history, historicalStrategy])
+    if (!history.length) return null
+    return buildRollingHistoricalBacktestResult(history, selectedStrategyId, 100)
+  }, [history, selectedStrategyId])
 
   const detailBacktest50 = React.useMemo(() => {
-    if (!history.length || !historicalStrategy) return null
-    return buildFixedStrategyBacktestResult(history, historicalStrategy, 50)
-  }, [history, historicalStrategy])
+    if (!detailBacktest100?.rows?.length) return null
+    return summarizeBacktestRows(detailBacktest100.rows.slice(0, 50))
+  }, [detailBacktest100])
 
-
-  function applyFrozenFirstRank(rows) {
-    return (rows || []).map((row) => {
-      const target = history.find((item) => String(item.expect) === String(row.expect))
-      const frozenFirst = readTop20Freeze(currentPlay, row.expect)?.rows?.[0]
-      if (!target || !frozenFirst) return row
-      const frozenHit = makeFrozenHitCell(target, frozenFirst)
-      return {
-        ...row,
-        hit: frozenHit.hit,
-        hotHit: frozenHit.hotHit,
-        coldHit: frozenHit.coldHit,
-      }
-    })
-  }
-
-  const best100Rows = applyFrozenFirstRank(detailBacktest100?.rows || [])
-  const best50Rows = applyFrozenFirstRank(detailBacktest50?.rows || [])
+  const best100Rows = detailBacktest100?.rows || []
+  const best50Rows = detailBacktest50?.rows || []
 
   const recommendNumbers = singleBacktest?.recommendNumbers || []
   const hotNumbers = singleBacktest?.hotNumbers || []
@@ -1500,9 +1345,8 @@ export default function Page() {
           <PlaySwitch currentPlay={currentPlay} onChange={changePlay} />
 
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '14px' }}>
-            <button
-              type="button"
-              onClick={saveTop20SnapshotAndGo}
+            <a
+              href="/top20"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -1514,12 +1358,10 @@ export default function Page() {
                 fontWeight: 900,
                 textDecoration: 'none',
                 boxShadow: '0 10px 24px rgba(34, 197, 94, 0.22)',
-                border: 0,
-                cursor: 'pointer',
               }}
             >
               查看20档位当期开奖统计
-            </button>
+            </a>
           </div>
         </div>
 
@@ -1902,7 +1744,7 @@ export default function Page() {
               <div>
                 <div className="card-title">选择历史回测期号</div>
                 <p className="section-desc">
-                  这里是历史回测，不是下一期推荐。选择某一期，系统只会使用该期之前的数据生成36码，不会把该期开奖号码提前放进去；下方近100期明细会跟当前查看的历史回测策略保持一致，避免同一期上面未中、下面命中的情况。
+                  这里是历史回测，不是下一期推荐。选择某一期，系统只会使用该期之前的数据生成36码，不会把该期开奖号码提前放进去；下方近100期明细每一行也会独立使用该期开奖之前的数据计算，避免旧期结果被新开奖改写。
                 </p>
               </div>
             </div>
@@ -2195,7 +2037,7 @@ export default function Page() {
               <DetailBacktestTable title="近50期回测明细" rows={best50Rows} limit={50} />
 
               <div className="footer-note">
-                回测逻辑：上方单期历史回测和下方近100期/50期明细使用同一套历史策略。绿色圈表示前6个平码落入36码；黄色圈表示最后特码落入36码。金额回测只按特码命中计算。
+                回测逻辑：下方近100期/50期明细每一行都会独立使用该期开奖之前的数据生成36码。绿色圈表示前6个平码落入36码；黄色圈表示最后特码落入36码。金额回测只按特码命中计算。
               </div>
             </>
           )}
