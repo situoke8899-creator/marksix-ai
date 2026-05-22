@@ -148,7 +148,7 @@ function DetailBacktestTable({ title, rows, limit = 100 }) {
     <section className="card">
       <div className="card-title">{title}</div>
       <p className="section-desc">
-        表格按开奖站样式展示，号码显示波色与生肖。下一期36码会提前固定保存；上期或前几期如果已冻结为未中，以后新增开奖后仍显示未中。策略切换已优化，不会再因为一次性写入100期数据而卡顿。黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
+        表格按开奖站样式展示，号码显示波色与生肖。下一期36码会提前固定保存；当前页面显示出来的近100期回测也会在后台分批冻结。上期或前几期如果显示未中，以后新增开奖后仍显示未中；策略切换不会再明显卡顿。黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
       </p>
 
       <div className="detail-table-wrap">
@@ -576,6 +576,71 @@ function freezeNextStableBacktest(history, strategyRanking, currentPlay, nextExp
     console.warn('冻结下一期固定回测数据失败', error)
   }
 }
+
+
+function freezeVisibleBacktestRows(rows, currentPlay, selectedStrategyId) {
+  if (typeof window === 'undefined') return
+  if (!rows?.length || !currentPlay) return
+
+  const strategyId = selectedStrategyId || 'auto'
+
+  const tasks = rows
+    .filter((row) => row && row.expect && row.recommendNumbers)
+    .map((row) => ({
+      key: getStableBacktestKey(currentPlay, strategyId, row.expect),
+      row,
+    }))
+
+  if (!tasks.length) return
+
+  let index = 0
+
+  const runBatch = () => {
+    const end = Math.min(index + 8, tasks.length)
+
+    for (; index < end; index++) {
+      const { key, row } = tasks[index]
+
+      try {
+        // 核心：已经冻结过的期号，永远不覆盖。
+        if (window.localStorage.getItem(key)) continue
+
+        window.localStorage.setItem(
+          key,
+          JSON.stringify({
+            version: 'stable-backtest-v14',
+            play: currentPlay,
+            strategyId,
+            expect: String(row.expect),
+            generatedAt: Date.now(),
+            usedStrategyId: row.usedStrategyId || '',
+            usedStrategyLabel: row.usedStrategyLabel || '',
+            recommendNumbers: normalizeNumberList(row.recommendNumbers),
+            hotNumbers: normalizeNumberList(row.hotNumbers),
+            coldNumbers: normalizeNumberList(row.coldNumbers),
+          })
+        )
+      } catch (error) {
+        console.warn('后台冻结近100期回测失败', error)
+      }
+    }
+
+    if (index < tasks.length) {
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(runBatch, { timeout: 800 })
+      } else {
+        window.setTimeout(runBatch, 30)
+      }
+    }
+  }
+
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(runBatch, { timeout: 800 })
+  } else {
+    window.setTimeout(runBatch, 30)
+  }
+}
+
 
 
 function Ball({ num, count, type, small = false, hit = false, hitType = 'special' }) {
@@ -1568,6 +1633,10 @@ export default function Page() {
 
   const best100Rows = detailBacktest100?.rows || []
   const best50Rows = detailBacktest50?.rows || []
+
+  React.useEffect(() => {
+    freezeVisibleBacktestRows(best100Rows, currentPlay, selectedStrategyId)
+  }, [best100Rows, currentPlay, selectedStrategyId])
 
   const recommendNumbers = singleBacktest?.recommendNumbers || []
   const hotNumbers = singleBacktest?.hotNumbers || []
