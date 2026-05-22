@@ -148,7 +148,7 @@ function DetailBacktestTable({ title, rows, limit = 100 }) {
     <section className="card">
       <div className="card-title">{title}</div>
       <p className="section-desc">
-        表格按开奖站样式展示，号码显示波色与生肖。每一行都会使用该期之前的数据重新生成36码；黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
+        表格按开奖站样式展示，号码显示波色与生肖。每一期36码第一次生成后会固定保存；上期或前几期如果未中，以后新增开奖后仍显示未中，不会被重新计算成中奖。黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
       </p>
 
       <div className="detail-table-wrap">
@@ -272,6 +272,258 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
     roi,
   }
 }
+
+
+function normalizeNumberList(items) {
+  return (items || [])
+    .map((item) => Number(item?.num ?? item))
+    .filter((num) => Number.isInteger(num) && num >= 1 && num <= 49)
+}
+
+function getStableBacktestKey(play, strategyId, expect) {
+  return `marksix-stable-backtest-v14-${play}-${strategyId || 'auto'}-${expect}`
+}
+
+function readStableBacktest(play, strategyId, expect) {
+  if (typeof window === 'undefined' || !play || !expect) return null
+
+  try {
+    const raw = window.localStorage.getItem(getStableBacktestKey(play, strategyId, expect))
+    if (!raw) return null
+
+    const parsed = JSON.parse(raw)
+
+    if (
+      parsed?.version === 'stable-backtest-v14' &&
+      parsed?.play === play &&
+      parsed?.strategyId === (strategyId || 'auto') &&
+      String(parsed?.expect) === String(expect)
+    ) {
+      return parsed
+    }
+  } catch (error) {
+    console.warn('读取固定回测数据失败', error)
+  }
+
+  return null
+}
+
+function writeStableBacktest(play, strategyId, expect, strategy, analysis) {
+  if (typeof window === 'undefined' || !play || !expect || !strategy || !analysis) return null
+
+  try {
+    const key = getStableBacktestKey(play, strategyId, expect)
+    const existed = window.localStorage.getItem(key)
+
+    // 核心规则：已经保存过的期号，永远不覆盖。
+    // 所以今天未中，明天新增开奖后也不会被重算成中奖。
+    if (existed) {
+      return readStableBacktest(play, strategyId, expect)
+    }
+
+    const stored = {
+      version: 'stable-backtest-v14',
+      play,
+      strategyId: strategyId || 'auto',
+      expect: String(expect),
+      generatedAt: Date.now(),
+      usedStrategyId: strategy.id || '',
+      usedStrategyLabel: strategy.label || '',
+      recommendNumbers: normalizeNumberList(analysis.recommendNumbers),
+      hotNumbers: normalizeNumberList(analysis.hotNumbers),
+      coldNumbers: normalizeNumberList(analysis.coldNumbers),
+    }
+
+    window.localStorage.setItem(key, JSON.stringify(stored))
+    return stored
+  } catch (error) {
+    console.warn('写入固定回测数据失败', error)
+  }
+
+  return null
+}
+
+function buildRowFromStableBacktest(target, stored) {
+  const specialNumber = target.numbers[target.numbers.length - 1]
+
+  const recommendNumbers = (stored?.recommendNumbers || []).map((num) => ({
+    num: Number(num),
+    count: 0,
+    type: 'hot',
+  }))
+
+  const hotNumbers = (stored?.hotNumbers || []).map((num) => ({
+    num: Number(num),
+    count: 0,
+    type: 'hot',
+  }))
+
+  const coldNumbers = (stored?.coldNumbers || []).map((num) => ({
+    num: Number(num),
+    count: 0,
+    type: 'cold',
+  }))
+
+  const recommendSet = new Set(recommendNumbers.map((item) => item.num))
+  const hotSet = new Set(hotNumbers.map((item) => item.num))
+  const coldSet = new Set(coldNumbers.map((item) => item.num))
+
+  const hit = recommendSet.has(Number(specialNumber))
+  const hotHit = hotSet.has(Number(specialNumber))
+  const coldHit = coldSet.has(Number(specialNumber))
+
+  return {
+    expect: target.expect,
+    openTime: target.openTime,
+    numbers: target.numbers,
+    specialNumber,
+    hit,
+    hotHit,
+    coldHit,
+    recommendNumbers,
+    hotNumbers,
+    coldNumbers,
+    usedStrategyId: stored?.usedStrategyId || '',
+    usedStrategyLabel: stored?.usedStrategyLabel || '',
+    isStableFrozen: true,
+  }
+}
+
+function summarizeStableRows(rows = []) {
+  const testedCount = rows.length
+  const hitCount = rows.filter((item) => item.hit).length
+  const hotHitCount = rows.filter((item) => item.hotHit).length
+  const coldHitCount = rows.filter((item) => item.coldHit).length
+
+  const hitRate = testedCount ? Number(((hitCount / testedCount) * 100).toFixed(2)) : 0
+  const hotHitRate = testedCount ? Number(((hotHitCount / testedCount) * 100).toFixed(2)) : 0
+  const coldHitRate = testedCount ? Number(((coldHitCount / testedCount) * 100).toFixed(2)) : 0
+
+  return {
+    testedCount,
+    hitCount,
+    hotHitCount,
+    coldHitCount,
+    hitRate,
+    hotHitRate,
+    coldHitRate,
+    rows,
+  }
+}
+
+function buildStableBacktestResult(history, selectedStrategyId = 'auto', currentPlay = 'macau', rangeSize = 100) {
+  const rows = []
+  const strategyId = selectedStrategyId || 'auto'
+
+  if (!history?.length) return summarizeStableRows(rows)
+
+  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
+    const target = history[index]
+
+    const stored = readStableBacktest(currentPlay, strategyId, target.expect)
+
+    if (stored) {
+      rows.push(buildRowFromStableBacktest(target, stored))
+      continue
+    }
+
+    const beforeHistory = history.slice(index + 1)
+
+    if (!beforeHistory.length) continue
+
+    const beforeRanking = buildStrategyRanking(beforeHistory)
+
+    if (!beforeRanking.length) continue
+
+    const strategy =
+      strategyId === 'auto'
+        ? beforeRanking[0]
+        : beforeRanking.find((item) => item.id === strategyId) || beforeRanking[0]
+
+    if (!strategy || beforeHistory.length < getRequiredSampleSize(strategy)) continue
+
+    const analysis = buildRecommendByStrategy(beforeHistory, strategy)
+    const newStored = writeStableBacktest(currentPlay, strategyId, target.expect, strategy, analysis)
+
+    if (newStored) {
+      rows.push(buildRowFromStableBacktest(target, newStored))
+      continue
+    }
+
+    const specialNumber = target.numbers[target.numbers.length - 1]
+    const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
+    const hotSet = new Set(analysis.hotNumbers.map((item) => item.num))
+    const coldSet = new Set(analysis.coldNumbers.map((item) => item.num))
+
+    const hit = recommendSet.has(specialNumber)
+    const hotHit = hotSet.has(specialNumber)
+    const coldHit = coldSet.has(specialNumber)
+
+    rows.push({
+      expect: target.expect,
+      openTime: target.openTime,
+      numbers: target.numbers,
+      specialNumber,
+      hit,
+      hotHit,
+      coldHit,
+      usedStrategyId: strategy.id,
+      usedStrategyLabel: strategy.label,
+      ...analysis,
+    })
+  }
+
+  return summarizeStableRows(rows)
+}
+
+function freezeNextStableBacktest(history, strategyRanking, currentPlay, nextExpect) {
+  if (typeof window === 'undefined') return
+  if (!history?.length || !strategyRanking?.length || !nextExpect) return
+  if (String(nextExpect).includes('等待')) return
+
+  try {
+    const targets = [
+      {
+        strategyId: 'auto',
+        strategy: strategyRanking[0],
+      },
+      ...strategyRanking.slice(0, 20).map((strategy) => ({
+        strategyId: strategy.id,
+        strategy,
+      })),
+    ]
+
+    targets.forEach(({ strategyId, strategy }) => {
+      if (!strategy) return
+
+      const key = getStableBacktestKey(currentPlay, strategyId, nextExpect)
+
+      // 下一期如果已经冻结过，也不覆盖。
+      if (window.localStorage.getItem(key)) return
+
+      const analysis = buildRecommendByStrategy(history, strategy)
+
+      window.localStorage.setItem(
+        key,
+        JSON.stringify({
+          version: 'stable-backtest-v14',
+          play: currentPlay,
+          strategyId: strategyId || 'auto',
+          expect: String(nextExpect),
+          generatedAt: Date.now(),
+          usedStrategyId: strategy.id || '',
+          usedStrategyLabel: strategy.label || '',
+          recommendNumbers: normalizeNumberList(analysis.recommendNumbers),
+          hotNumbers: normalizeNumberList(analysis.hotNumbers),
+          coldNumbers: normalizeNumberList(analysis.coldNumbers),
+        })
+      )
+    })
+  } catch (error) {
+    console.warn('冻结下一期固定回测数据失败', error)
+  }
+}
+
 
 function Ball({ num, count, type, small = false, hit = false, hitType = 'special' }) {
   const wave = getWave(Number(num))
@@ -1214,14 +1466,14 @@ export default function Page() {
   ].join('\n')
 
   const detailBacktest100 = React.useMemo(() => {
-    if (!history.length || !historicalStrategy) return null
-    return buildFixedStrategyBacktestResult(history, historicalStrategy, 100)
-  }, [history, historicalStrategy])
+    if (!history.length) return null
+    return buildStableBacktestResult(history, selectedStrategyId, currentPlay, 100)
+  }, [history, selectedStrategyId, currentPlay])
 
   const detailBacktest50 = React.useMemo(() => {
-    if (!history.length || !historicalStrategy) return null
-    return buildFixedStrategyBacktestResult(history, historicalStrategy, 50)
-  }, [history, historicalStrategy])
+    if (!detailBacktest100?.rows?.length) return null
+    return summarizeStableRows(detailBacktest100.rows.slice(0, 50))
+  }, [detailBacktest100])
 
   const best100Rows = detailBacktest100?.rows || []
   const best50Rows = detailBacktest50?.rows || []
@@ -1852,7 +2104,7 @@ export default function Page() {
               <div>
                 <div className="card-title">选择历史回测期号</div>
                 <p className="section-desc">
-                  这里是历史回测，不是下一期推荐。选择某一期，系统只会使用该期之前的数据生成36码，不会把该期开奖号码提前放进去；下方近100期明细会跟当前查看的历史回测策略保持一致，避免同一期上面未中、下面命中的情况。
+                  这里是历史回测，不是下一期推荐。选择某一期，系统会优先读取该期已经固定保存的36码；如果没有保存，才使用该期之前的数据生成并立即固定保存，避免以后新增开奖后旧期结果被改写。
                 </p>
               </div>
             </div>
@@ -2145,7 +2397,7 @@ export default function Page() {
               <DetailBacktestTable title="近50期回测明细" rows={best50Rows} limit={50} />
 
               <div className="footer-note">
-                回测逻辑：上方单期历史回测和下方近100期/50期明细使用同一套历史策略。绿色圈表示前6个平码落入36码；黄色圈表示最后特码落入36码。金额回测只按特码命中计算。
+                回测逻辑：近100期/50期明细优先读取固定保存的36码。上期开的号码或前几期开的号码，如果当时未中，后面新增开奖后仍然未中。绿色圈表示前6个平码落入36码；黄色圈表示最后特码落入36码。金额回测只按特码命中计算。
               </div>
             </>
           )}
