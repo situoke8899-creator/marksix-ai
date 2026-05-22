@@ -148,7 +148,7 @@ function DetailBacktestTable({ title, rows, limit = 100 }) {
     <section className="card">
       <div className="card-title">{title}</div>
       <p className="section-desc">
-        表格按开奖站样式展示，号码显示波色与生肖。每一期36码第一次生成后会固定保存；上期或前几期如果未中，以后新增开奖后仍显示未中，不会被重新计算成中奖。黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
+        表格按开奖站样式展示，号码显示波色与生肖。下一期36码会提前固定保存；上期或前几期如果已冻结为未中，以后新增开奖后仍显示未中。策略切换已优化，不会再因为一次性写入100期数据而卡顿。黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
       </p>
 
       <div className="detail-table-wrap">
@@ -475,6 +475,59 @@ function buildStableBacktestResult(history, selectedStrategyId = 'auto', current
 
   return summarizeStableRows(rows)
 }
+
+
+function buildFastStableBacktestResult(history, strategy, selectedStrategyId = 'auto', currentPlay = 'macau', rangeSize = 100) {
+  const rows = []
+  const strategyId = selectedStrategyId || 'auto'
+
+  if (!history?.length || !strategy) return summarizeStableRows(rows)
+
+  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
+    const target = history[index]
+    const stored = readStableBacktest(currentPlay, strategyId, target.expect)
+
+    // 已经冻结过的期号，直接读取，不重新计算，不覆盖。
+    if (stored) {
+      rows.push(buildRowFromStableBacktest(target, stored))
+      continue
+    }
+
+    const beforeHistory = history.slice(index + 1)
+
+    if (beforeHistory.length < getRequiredSampleSize(strategy)) continue
+
+    const analysis = buildRecommendByStrategy(beforeHistory, strategy)
+    const specialNumber = target.numbers[target.numbers.length - 1]
+
+    const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
+    const hotSet = new Set(analysis.hotNumbers.map((item) => item.num))
+    const coldSet = new Set(analysis.coldNumbers.map((item) => item.num))
+
+    const hit = recommendSet.has(specialNumber)
+    const hotHit = hotSet.has(specialNumber)
+    const coldHit = coldSet.has(specialNumber)
+
+    // 注意：这里不写 localStorage。
+    // 原来 V14 在切换策略时会一次性写入近100期，导致下拉框卡顿。
+    // 固定功能由 freezeNextStableBacktest 负责提前冻结下一期。
+    rows.push({
+      expect: target.expect,
+      openTime: target.openTime,
+      numbers: target.numbers,
+      specialNumber,
+      hit,
+      hotHit,
+      coldHit,
+      usedStrategyId: strategy.id,
+      usedStrategyLabel: strategy.label,
+      ...analysis,
+    })
+  }
+
+  return summarizeStableRows(rows)
+}
+
 
 function freezeNextStableBacktest(history, strategyRanking, currentPlay, nextExpect) {
   if (typeof window === 'undefined') return
@@ -1466,9 +1519,9 @@ export default function Page() {
   ].join('\n')
 
   const detailBacktest100 = React.useMemo(() => {
-    if (!history.length) return null
-    return buildStableBacktestResult(history, selectedStrategyId, currentPlay, 100)
-  }, [history, selectedStrategyId, currentPlay])
+    if (!history.length || !historicalStrategy) return null
+    return buildFastStableBacktestResult(history, historicalStrategy, selectedStrategyId, currentPlay, 100)
+  }, [history, historicalStrategy, selectedStrategyId, currentPlay])
 
   const detailBacktest50 = React.useMemo(() => {
     if (!detailBacktest100?.rows?.length) return null
