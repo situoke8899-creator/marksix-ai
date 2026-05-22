@@ -1843,9 +1843,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V11开奖前冻结版】</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V11.1开奖前冻结修复版】</div>
             <p className="desc">
-              【V11开奖前冻结版已生效】下一期36码会在开奖前冻结保存；开奖后历史结果不会被新数据改写。
+              【V11.1开奖前冻结修复版已生效】下一期36码会在开奖前冻结保存；开奖后历史结果不会被新数据改写。
             </p>
 
             <div className="table-wrap">
