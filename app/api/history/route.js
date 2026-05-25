@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
 export const revalidate = 0
 
 function parseOpenCode(value) {
@@ -557,19 +558,31 @@ export async function GET(request) {
 
     if (play === 'hongkong') {
       const data = await getHongKongData()
-      return NextResponse.json(data)
+      return NextResponse.json(data, {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+        },
+      })
     }
 
     const data = await getMacauData()
-    return NextResponse.json(data)
+    return NextResponse.json(data, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      },
+    })
   } catch (error) {
     return NextResponse.json(
       {
         ok: false,
+        route: '/api/history',
         message: error.message || '获取开奖数据失败，请稍后重试',
       },
       {
         status: 500,
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+        },
       }
     )
   }
