@@ -1,35 +1,20 @@
 import { NextResponse } from 'next/server'
 
 export function middleware(request) {
-  const password = process.env.SITE_PASSWORD
-
   const { pathname } = request.nextUrl
 
+  // API 必须放行，不然 /api/history 会返回登录页 HTML
   if (
-    pathname.startsWith('/login') ||
-    pathname.startsWith('/api/login') ||
+    pathname.startsWith('/api') ||
     pathname.startsWith('/_next') ||
-    pathname === '/favicon.ico'
+    pathname.startsWith('/favicon') ||
+    pathname.includes('.')
   ) {
     return NextResponse.next()
   }
 
-  if (!password) {
-    return new Response('网站密码还没有设置，请先在 Vercel 设置 SITE_PASSWORD', {
-      status: 500,
-    })
-  }
-
-  const authCookie = request.cookies.get('site_auth')?.value
-
-  if (authCookie === 'ok') {
-    return NextResponse.next()
-  }
-
-  const loginUrl = request.nextUrl.clone()
-  loginUrl.pathname = '/login'
-
-  return NextResponse.redirect(loginUrl)
+  // 先全部放行，避免 /login 和首页互相跳转卡死
+  return NextResponse.next()
 }
 
 export const config = {
