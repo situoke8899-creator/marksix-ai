@@ -4,12 +4,10 @@ import React from 'react'
 
 const PLAY_CONFIG = {
   macau: {
-    key: 'macau',
     name: '澳门',
     api: '/api/history?play=macau',
   },
   hongkong: {
-    key: 'hongkong',
     name: '香港',
     api: '/api/history?play=hongkong',
   },
@@ -35,6 +33,49 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
     totalReturn,
     profit,
     roi,
+  }
+}
+
+
+function getTop20FreezeKey(play, expect) {
+  return `marksix-freeze-top20-${play}-${expect}`
+}
+
+function readTop20Freeze(play, expect) {
+  if (typeof window === 'undefined' || !play || !expect) return null
+  try {
+    const raw = window.localStorage.getItem(getTop20FreezeKey(play, expect))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed?.version === 'freeze-v11' && parsed?.play === play && String(parsed?.expect) === String(expect)) {
+      return parsed
+    }
+  } catch (error) {
+    console.warn('读取冻结数据失败', error)
+  }
+  return null
+}
+
+function numberItemsToNumbers(items) {
+  return (items || [])
+    .map((item) => Number(item?.num ?? item))
+    .filter((num) => Number.isInteger(num) && num >= 1 && num <= 49)
+}
+
+function makeFrozenHitCell(draw, frozenRow) {
+  const specialNumber = Number(draw?.numbers?.[draw.numbers.length - 1])
+  const recommendSet = new Set((frozenRow?.recommendNumbers || []).map(Number))
+  const hotSet = new Set((frozenRow?.hotNumbers || []).map(Number))
+  const coldSet = new Set((frozenRow?.coldNumbers || []).map(Number))
+  const hit = recommendSet.has(specialNumber)
+  const hotHit = hotSet.has(specialNumber)
+  const coldHit = coldSet.has(specialNumber)
+  return {
+    hit,
+    hotHit,
+    coldHit,
+    status: hotHit ? '热码命中' : coldHit ? '冷码命中' : hit ? '命中' : '未中',
+    shortStatus: hotHit ? '热中' : coldHit ? '冷中' : hit ? '中' : '未中',
   }
 }
 
@@ -1138,7 +1179,9 @@ export default function Top20StatsPage() {
       try {
         json = JSON.parse(text)
       } catch (error) {
-        throw new Error(`${playConfig.name}接口返回不是JSON`)
+        console.log(`${playConfig.name}接口原始返回内容：`, text)
+        const preview = String(text || '').slice(0, 200)
+        throw new Error(`${playConfig.name}接口返回不是JSON，请检查 /api/history?play=${currentPlay}。返回内容前200字：${preview}`)
       }
 
       if (!json.ok) {
@@ -1168,7 +1211,7 @@ export default function Top20StatsPage() {
 
       const parsed = JSON.parse(raw)
 
-      if (parsed?.play === currentPlay && parsed?.version === 'home-sync-v10-first-column-detail-table') {
+      if (parsed?.play === currentPlay && parsed?.version === 'home-sync-v11-freeze-future') {
         setHomeSnapshot(parsed)
       } else {
         setHomeSnapshot(null)
@@ -1800,9 +1843,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V10第一列同步近100明细版】</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V11.1开奖前冻结修复版】</div>
             <p className="desc">
-              【V10第一列同步近100明细版已生效】第1列直接同步首页近100期回测明细；其它列按首页下拉框策略计算；30期盈亏已修复。
+              【V11.1开奖前冻结修复版已生效】下一期36码会在开奖前冻结保存；开奖后历史结果不会被新数据改写。
             </p>
 
             <div className="table-wrap">
