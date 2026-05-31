@@ -1432,35 +1432,20 @@ export default function Page() {
     }
   }
 
-  const historicalStrategy = React.useMemo(() => {
-    if (!history.length || !selectedExpect) return currentStrategy
+  // V18：页面所有历史明细、胜率和20档位统计必须读取同一个具体策略ID。
+  // 自动选择仅用于决定当前展示哪一个策略，不再额外使用 `auto` 作为另一套存档。
+  // 否则首页会读取 auto 存档，而20档位读取 strategy.id 存档，导致同一期一个显示未中、一个显示命中。
+  const effectiveStrategyId = currentStrategy?.id || selectedStrategyId || 'auto'
 
-    const targetIndex = history.findIndex(
-      (item) => String(item.expect) === String(selectedExpect)
-    )
-
-    if (targetIndex === -1) return currentStrategy
-
-    const beforeHistory = history.slice(targetIndex + 1)
-
-    if (!beforeHistory.length) return currentStrategy
-
-    const beforeRanking = buildStrategyRanking(beforeHistory)
-
-    if (!beforeRanking.length) return currentStrategy
-
-    if (selectedStrategyId === 'auto') {
-      return beforeRanking[0]
-    }
-
-    return beforeRanking.find((item) => item.id === selectedStrategyId) || beforeRanking[0]
-  }, [history, selectedExpect, selectedStrategyId, currentStrategy])
+  // 历史回测区域固定查看当前选中的策略，不再针对某一期重新挑选另一套历史最佳策略。
+  // 这样上方100期明细、单期详情和20档位页面使用的是完全相同的号码与冻结结果。
+  const historicalStrategy = currentStrategy
 
   const singleBacktest = buildRealtimeSingleBacktest(
     history,
     selectedExpect,
     historicalStrategy,
-    selectedStrategyId,
+    effectiveStrategyId,
     currentPlay
   )
 
@@ -1495,8 +1480,8 @@ export default function Page() {
 
   const detailBacktest100 = React.useMemo(() => {
     if (!history.length || !currentStrategy) return null
-    return buildFastStableBacktestResult(history, currentStrategy, selectedStrategyId, currentPlay, 100)
-  }, [history, currentStrategy, selectedStrategyId, currentPlay])
+    return buildFastStableBacktestResult(history, currentStrategy, effectiveStrategyId, currentPlay, 100)
+  }, [history, currentStrategy, effectiveStrategyId, currentPlay])
 
   const detailBacktest50 = React.useMemo(() => {
     if (!detailBacktest100?.rows?.length) return null
@@ -1507,8 +1492,8 @@ export default function Page() {
   const best50Rows = detailBacktest50?.rows || []
 
   React.useEffect(() => {
-    freezeVisibleBacktestRows(best100Rows, currentPlay, selectedStrategyId)
-  }, [best100Rows, currentPlay, selectedStrategyId])
+    freezeVisibleBacktestRows(best100Rows, currentPlay, effectiveStrategyId)
+  }, [best100Rows, currentPlay, effectiveStrategyId])
 
   const recommendNumbers = singleBacktest?.recommendNumbers || []
   const hotNumbers = singleBacktest?.hotNumbers || []
