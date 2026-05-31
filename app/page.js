@@ -148,7 +148,7 @@ function DetailBacktestTable({ title, rows, limit = 100 }) {
     <section className="card">
       <div className="card-title">{title}</div>
       <p className="section-desc">
-        表格按开奖站样式展示，号码显示波色与生肖。这里只统计开奖前已经保存过的实时36码。某一期开奖前没有保存记录，就不会事后回算，也不会纳入统计。已保存期号的命中或未命中状态永久锁定，后续新增开奖不会改变。黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
+        表格按开奖站样式展示，号码显示波色与生肖。旧历史首次打开时，会按照该期以前的数据生成一次基准回测并立即冻结；之后新增开奖不会改写旧期号。从下一期开始，系统会优先读取开奖前已经保存的实时36码。黄色圈 = 特码落入当期筛选36码，绿色圈 = 平码落入36码。金额回测仍只按特码命中计算。
       </p>
 
       <div className="detail-table-wrap">
@@ -431,6 +431,56 @@ function writeStableBacktest(play, strategyId, expect, strategy, analysis) {
   return null
 }
 
+function writeHistoricalBaselineBacktest(play, strategyId, target, strategy, analysis) {
+  if (typeof window === 'undefined' || !play || !target?.expect || !strategy || !analysis) return null
+
+  try {
+    const existed = readStableBacktest(play, strategyId, target.expect)
+    if (existed) return existed
+
+    const stored = {
+      version: STABLE_BACKTEST_VERSION,
+      play,
+      strategyId: strategyId || 'auto',
+      expect: String(target.expect),
+      generatedAt: Date.now(),
+      source: 'historical-baseline-freeze-v17',
+      usedStrategyId: strategy.id || '',
+      usedStrategyLabel: strategy.label || '',
+      recommendNumbers: normalizeNumberList(analysis.recommendNumbers),
+      hotNumbers: normalizeNumberList(analysis.hotNumbers),
+      coldNumbers: normalizeNumberList(analysis.coldNumbers),
+      resultLocked: false,
+    }
+
+    window.localStorage.setItem(
+      getStableBacktestKey(play, strategyId, target.expect),
+      JSON.stringify(stored)
+    )
+
+    return stored
+  } catch (error) {
+    console.warn('保存历史基准冻结数据失败', error)
+  }
+
+  return null
+}
+
+function ensureStableBacktestRow(history, index, strategy, selectedStrategyId = 'auto', currentPlay = 'macau') {
+  const target = history?.[index]
+  if (!target || !strategy) return null
+
+  const strategyId = selectedStrategyId || 'auto'
+  const existed = readStableBacktest(currentPlay, strategyId, target.expect)
+  if (existed) return existed
+
+  const beforeHistory = history.slice(index + 1)
+  if (beforeHistory.length < getRequiredSampleSize(strategy)) return null
+
+  const analysis = buildRecommendByStrategy(beforeHistory, strategy)
+  return writeHistoricalBaselineBacktest(currentPlay, strategyId, target, strategy, analysis)
+}
+
 function buildRowFromStableBacktest(target, stored, currentPlay = 'macau', strategyId = 'auto') {
   const resolvedStored = finalizeStableBacktestOutcome(currentPlay, strategyId, target, stored) || stored
   const specialNumber = Number(target.numbers[target.numbers.length - 1])
@@ -496,17 +546,18 @@ function summarizeStableRows(rows = []) {
   }
 }
 
-function buildStableBacktestResult(history, selectedStrategyId = 'auto', currentPlay = 'macau', rangeSize = 100) {
+function buildStableBacktestResult(history, strategy, selectedStrategyId = 'auto', currentPlay = 'macau', rangeSize = 100) {
   const rows = []
   const strategyId = selectedStrategyId || 'auto'
 
-  if (!history?.length) return summarizeStableRows(rows)
+  if (!history?.length || !strategy) return summarizeStableRows(rows)
 
   for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
     const target = history[index]
-    const stored = readStableBacktest(currentPlay, strategyId, target.expect)
+    const stored = ensureStableBacktestRow(history, index, strategy, strategyId, currentPlay)
 
-    // 严格实时模式：开奖前没有保存过号码的历史期数，直接跳过，不做事后回算。
+    // 旧历史首次进入 V17 时按当期以前的数据生成一次基准结果并锁定；
+    // 之后只读取保存结果，不会随着新增开奖再次变化。
     if (!stored) continue
 
     rows.push(buildRowFromStableBacktest(target, stored, currentPlay, strategyId))
@@ -516,19 +567,19 @@ function buildStableBacktestResult(history, selectedStrategyId = 'auto', current
 }
 
 function buildFastStableBacktestResult(history, strategy, selectedStrategyId = 'auto', currentPlay = 'macau', rangeSize = 100) {
-  return buildStableBacktestResult(history, selectedStrategyId, currentPlay, rangeSize)
+  return buildStableBacktestResult(history, strategy, selectedStrategyId, currentPlay, rangeSize)
 }
 
 function buildRealtimeSingleBacktest(history, targetExpect, strategy, selectedStrategyId = 'auto', currentPlay = 'macau') {
-  if (!history?.length || !targetExpect) return null
+  if (!history?.length || !targetExpect || !strategy) return null
 
-  const target = history.find((item) => String(item.expect) === String(targetExpect))
-  if (!target) return null
+  const targetIndex = history.findIndex((item) => String(item.expect) === String(targetExpect))
+  if (targetIndex === -1) return null
 
+  const target = history[targetIndex]
   const strategyId = selectedStrategyId || 'auto'
-  const stored = readStableBacktest(currentPlay, strategyId, target.expect)
+  const stored = ensureStableBacktestRow(history, targetIndex, strategy, strategyId, currentPlay)
 
-  // 没有开奖前保存记录时，不允许事后生成“历史结果”。
   if (!stored) return null
 
   return {
@@ -578,7 +629,7 @@ function freezeNextTop20RealtimeSnapshot(history, strategyRanking, currentPlay, 
     freezeNextStableBacktest(history, strategyRanking, currentPlay, nextExpect)
 
     const strategies = strategyRanking.slice(0, 20).map((strategy, index) => {
-      const result100 = buildStableBacktestResult(history, strategy.id, currentPlay, 100)
+      const result100 = buildStableBacktestResult(history, strategy, strategy.id, currentPlay, 100)
       const result50 = summarizeStableRows(result100.rows.slice(0, 50))
       const frozenNext = readStableBacktest(currentPlay, strategy.id, nextExpect)
 
@@ -622,7 +673,7 @@ function freezeNextTop20RealtimeSnapshot(history, strategyRanking, currentPlay, 
 }
 
 function freezeVisibleBacktestRows() {
-  // V16 严格实时模式：禁止在开奖后批量回填历史结果。
+  // V17：历史基准会在首次读取时锁定；后续新增开奖不会覆盖旧结果。
 }
 
 
@@ -1374,8 +1425,8 @@ export default function Page() {
 
 
   function saveTop20SnapshotAndGo() {
-    // V16：20档位页面直接读取首页在开奖前保存的同一份实时快照。
-    // 不在点击按钮时重新计算历史数据。
+    // V17：20档位页面读取与首页相同的冻结记录。
+    // 旧历史首次生成基准后锁定，后续开奖不再覆盖。
     if (typeof window !== 'undefined') {
       window.location.href = `/top20?play=${currentPlay}`
     }
@@ -1805,7 +1856,7 @@ export default function Page() {
             <div className="card">
               <div className="card-title">当前最佳策略</div>
               <p className="section-desc">
-                系统自动测试多种组合，默认选择综合表现最好的策略。这里的100期/50期只统计开奖前已经保存过的实时记录；缺少实时记录的旧期号不会事后补算。
+                系统自动测试多种组合，默认选择综合表现最好的策略。旧历史会在首次打开时生成一次基准回测并锁定，因此100期、50期命中率与盈亏金额会正常显示；后续新增开奖不会改变已经锁定的旧结果。
               </p>
 
               <div className="latest-info">
