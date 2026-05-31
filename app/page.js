@@ -280,27 +280,62 @@ function normalizeNumberList(items) {
     .filter((num) => Number.isInteger(num) && num >= 1 && num <= 49)
 }
 
+const STABLE_BACKTEST_VERSION = 'stable-backtest-v15'
+const LEGACY_STABLE_BACKTEST_VERSION = 'stable-backtest-v14'
+
 function getStableBacktestKey(play, strategyId, expect) {
+  return `marksix-stable-backtest-v15-${play}-${strategyId || 'auto'}-${expect}`
+}
+
+function getLegacyStableBacktestKey(play, strategyId, expect) {
   return `marksix-stable-backtest-v14-${play}-${strategyId || 'auto'}-${expect}`
+}
+
+function isStableBacktestRecord(parsed, play, strategyId, expect) {
+  return (
+    parsed &&
+    [STABLE_BACKTEST_VERSION, LEGACY_STABLE_BACKTEST_VERSION].includes(parsed.version) &&
+    parsed.play === play &&
+    parsed.strategyId === (strategyId || 'auto') &&
+    String(parsed.expect) === String(expect)
+  )
 }
 
 function readStableBacktest(play, strategyId, expect) {
   if (typeof window === 'undefined' || !play || !expect) return null
 
   try {
-    const raw = window.localStorage.getItem(getStableBacktestKey(play, strategyId, expect))
-    if (!raw) return null
+    const key = getStableBacktestKey(play, strategyId, expect)
+    const currentRaw = window.localStorage.getItem(key)
 
-    const parsed = JSON.parse(raw)
-
-    if (
-      parsed?.version === 'stable-backtest-v14' &&
-      parsed?.play === play &&
-      parsed?.strategyId === (strategyId || 'auto') &&
-      String(parsed?.expect) === String(expect)
-    ) {
-      return parsed
+    if (currentRaw) {
+      const currentParsed = JSON.parse(currentRaw)
+      if (isStableBacktestRecord(currentParsed, play, strategyId, expect)) {
+        return currentParsed
+      }
     }
+
+    // 兼容旧版 V14：读取后迁移到 V15，但绝不重算、绝不覆盖旧结果。
+    const legacyKey = getLegacyStableBacktestKey(play, strategyId, expect)
+    const legacyRaw = window.localStorage.getItem(legacyKey)
+
+    if (!legacyRaw) return null
+
+    const legacyParsed = JSON.parse(legacyRaw)
+    if (!isStableBacktestRecord(legacyParsed, play, strategyId, expect)) return null
+
+    const migrated = {
+      ...legacyParsed,
+      version: STABLE_BACKTEST_VERSION,
+      migratedFrom: LEGACY_STABLE_BACKTEST_VERSION,
+      migratedAt: Date.now(),
+    }
+
+    if (!window.localStorage.getItem(key)) {
+      window.localStorage.setItem(key, JSON.stringify(migrated))
+    }
+
+    return migrated
   } catch (error) {
     console.warn('读取固定回测数据失败', error)
   }
@@ -308,25 +343,64 @@ function readStableBacktest(play, strategyId, expect) {
   return null
 }
 
-function writeStableBacktest(play, strategyId, expect, strategy, analysis) {
+function makeLockedOutcome(target, stored) {
+  const specialNumber = Number(target?.numbers?.[target.numbers.length - 1])
+  const recommendSet = new Set(normalizeNumberList(stored?.recommendNumbers))
+  const hotSet = new Set(normalizeNumberList(stored?.hotNumbers))
+  const coldSet = new Set(normalizeNumberList(stored?.coldNumbers))
+
+  return {
+    resultLocked: true,
+    resolvedAt: Date.now(),
+    specialNumber,
+    hit: recommendSet.has(specialNumber),
+    hotHit: hotSet.has(specialNumber),
+    coldHit: coldSet.has(specialNumber),
+  }
+}
+
+function finalizeStableBacktestOutcome(play, strategyId, target, stored) {
+  if (!stored || !target?.numbers?.length) return stored
+
+  // 已经锁定过开奖结果时，永远使用第一次保存的命中状态。
+  if (stored.resultLocked) return stored
+
+  const resolved = {
+    ...stored,
+    ...makeLockedOutcome(target, stored),
+  }
+
+  try {
+    const key = getStableBacktestKey(play, strategyId, target.expect)
+    window.localStorage.setItem(key, JSON.stringify(resolved))
+  } catch (error) {
+    console.warn('锁定当期开奖结果失败', error)
+  }
+
+  return resolved
+}
+
+function writeStableBacktest(play, strategyId, expect, strategy, analysis, target = null, source = 'historical-first-view') {
   if (typeof window === 'undefined' || !play || !expect || !strategy || !analysis) return null
 
   try {
-    const key = getStableBacktestKey(play, strategyId, expect)
-    const existed = window.localStorage.getItem(key)
+    const existed = readStableBacktest(play, strategyId, expect)
 
     // 核心规则：已经保存过的期号，永远不覆盖。
-    // 所以今天未中，明天新增开奖后也不会被重算成中奖。
+    // 昨天显示未中，今天新增开奖后仍然保持未中。
     if (existed) {
-      return readStableBacktest(play, strategyId, expect)
+      return target
+        ? finalizeStableBacktestOutcome(play, strategyId, target, existed)
+        : existed
     }
 
     const stored = {
-      version: 'stable-backtest-v14',
+      version: STABLE_BACKTEST_VERSION,
       play,
       strategyId: strategyId || 'auto',
       expect: String(expect),
       generatedAt: Date.now(),
+      source,
       usedStrategyId: strategy.id || '',
       usedStrategyLabel: strategy.label || '',
       recommendNumbers: normalizeNumberList(analysis.recommendNumbers),
@@ -334,8 +408,19 @@ function writeStableBacktest(play, strategyId, expect, strategy, analysis) {
       coldNumbers: normalizeNumberList(analysis.coldNumbers),
     }
 
-    window.localStorage.setItem(key, JSON.stringify(stored))
-    return stored
+    const lockedStored = target
+      ? {
+          ...stored,
+          ...makeLockedOutcome(target, stored),
+        }
+      : stored
+
+    window.localStorage.setItem(
+      getStableBacktestKey(play, strategyId, expect),
+      JSON.stringify(lockedStored)
+    )
+
+    return lockedStored
   } catch (error) {
     console.warn('写入固定回测数据失败', error)
   }
@@ -343,49 +428,47 @@ function writeStableBacktest(play, strategyId, expect, strategy, analysis) {
   return null
 }
 
-function buildRowFromStableBacktest(target, stored) {
-  const specialNumber = target.numbers[target.numbers.length - 1]
+function buildRowFromStableBacktest(target, stored, currentPlay = 'macau', strategyId = 'auto') {
+  const resolvedStored = finalizeStableBacktestOutcome(currentPlay, strategyId, target, stored) || stored
+  const specialNumber = Number(target.numbers[target.numbers.length - 1])
 
-  const recommendNumbers = (stored?.recommendNumbers || []).map((num) => ({
-    num: Number(num),
+  const hotSet = new Set(normalizeNumberList(resolvedStored?.hotNumbers))
+  const coldSet = new Set(normalizeNumberList(resolvedStored?.coldNumbers))
+
+  const recommendNumbers = normalizeNumberList(resolvedStored?.recommendNumbers).map((num) => ({
+    num,
+    count: 0,
+    type: hotSet.has(num) ? 'hot' : coldSet.has(num) ? 'cold' : 'hot',
+  }))
+
+  const hotNumbers = normalizeNumberList(resolvedStored?.hotNumbers).map((num) => ({
+    num,
     count: 0,
     type: 'hot',
   }))
 
-  const hotNumbers = (stored?.hotNumbers || []).map((num) => ({
-    num: Number(num),
-    count: 0,
-    type: 'hot',
-  }))
-
-  const coldNumbers = (stored?.coldNumbers || []).map((num) => ({
-    num: Number(num),
+  const coldNumbers = normalizeNumberList(resolvedStored?.coldNumbers).map((num) => ({
+    num,
     count: 0,
     type: 'cold',
   }))
-
-  const recommendSet = new Set(recommendNumbers.map((item) => item.num))
-  const hotSet = new Set(hotNumbers.map((item) => item.num))
-  const coldSet = new Set(coldNumbers.map((item) => item.num))
-
-  const hit = recommendSet.has(Number(specialNumber))
-  const hotHit = hotSet.has(Number(specialNumber))
-  const coldHit = coldSet.has(Number(specialNumber))
 
   return {
     expect: target.expect,
     openTime: target.openTime,
     numbers: target.numbers,
     specialNumber,
-    hit,
-    hotHit,
-    coldHit,
+    hit: Boolean(resolvedStored?.hit),
+    hotHit: Boolean(resolvedStored?.hotHit),
+    coldHit: Boolean(resolvedStored?.coldHit),
     recommendNumbers,
     hotNumbers,
     coldNumbers,
-    usedStrategyId: stored?.usedStrategyId || '',
-    usedStrategyLabel: stored?.usedStrategyLabel || '',
+    usedStrategyId: resolvedStored?.usedStrategyId || '',
+    usedStrategyLabel: resolvedStored?.usedStrategyLabel || '',
     isStableFrozen: true,
+    resultLocked: Boolean(resolvedStored?.resultLocked),
+    stableSource: resolvedStored?.source || '',
   }
 }
 
@@ -411,123 +494,90 @@ function summarizeStableRows(rows = []) {
   }
 }
 
-function buildStableBacktestResult(history, selectedStrategyId = 'auto', currentPlay = 'macau', rangeSize = 100) {
+function buildStableBacktestResult(history, selectedStrategyId = 'auto', currentPlay = 'macau', rangeSize = 100, fallbackStrategy = null) {
   const rows = []
   const strategyId = selectedStrategyId || 'auto'
 
-  if (!history?.length) return summarizeStableRows(rows)
+  if (!history?.length || !fallbackStrategy) return summarizeStableRows(rows)
 
   for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
     const target = history[index]
-
     const stored = readStableBacktest(currentPlay, strategyId, target.expect)
 
     if (stored) {
-      rows.push(buildRowFromStableBacktest(target, stored))
+      rows.push(buildRowFromStableBacktest(target, stored, currentPlay, strategyId))
       continue
     }
 
     const beforeHistory = history.slice(index + 1)
+    if (beforeHistory.length < getRequiredSampleSize(fallbackStrategy)) continue
 
-    if (!beforeHistory.length) continue
-
-    const beforeRanking = buildStrategyRanking(beforeHistory)
-
-    if (!beforeRanking.length) continue
-
-    const strategy =
-      strategyId === 'auto'
-        ? beforeRanking[0]
-        : beforeRanking.find((item) => item.id === strategyId) || beforeRanking[0]
-
-    if (!strategy || beforeHistory.length < getRequiredSampleSize(strategy)) continue
-
-    const analysis = buildRecommendByStrategy(beforeHistory, strategy)
-    const newStored = writeStableBacktest(currentPlay, strategyId, target.expect, strategy, analysis)
+    // 旧历史若从未保存过，只允许第一次生成后立即锁定。
+    // 从此以后只读锁定值，不再因为新增开奖而变化。
+    const analysis = buildRecommendByStrategy(beforeHistory, fallbackStrategy)
+    const newStored = writeStableBacktest(
+      currentPlay,
+      strategyId,
+      target.expect,
+      fallbackStrategy,
+      analysis,
+      target,
+      'historical-first-view'
+    )
 
     if (newStored) {
-      rows.push(buildRowFromStableBacktest(target, newStored))
-      continue
+      rows.push(buildRowFromStableBacktest(target, newStored, currentPlay, strategyId))
     }
-
-    const specialNumber = target.numbers[target.numbers.length - 1]
-    const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
-    const hotSet = new Set(analysis.hotNumbers.map((item) => item.num))
-    const coldSet = new Set(analysis.coldNumbers.map((item) => item.num))
-
-    const hit = recommendSet.has(specialNumber)
-    const hotHit = hotSet.has(specialNumber)
-    const coldHit = coldSet.has(specialNumber)
-
-    rows.push({
-      expect: target.expect,
-      openTime: target.openTime,
-      numbers: target.numbers,
-      specialNumber,
-      hit,
-      hotHit,
-      coldHit,
-      usedStrategyId: strategy.id,
-      usedStrategyLabel: strategy.label,
-      ...analysis,
-    })
   }
 
   return summarizeStableRows(rows)
 }
-
 
 function buildFastStableBacktestResult(history, strategy, selectedStrategyId = 'auto', currentPlay = 'macau', rangeSize = 100) {
-  const rows = []
-  const strategyId = selectedStrategyId || 'auto'
-
-  if (!history?.length || !strategy) return summarizeStableRows(rows)
-
-  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
-    const target = history[index]
-    const stored = readStableBacktest(currentPlay, strategyId, target.expect)
-
-    // 已经冻结过的期号，直接读取，不重新计算，不覆盖。
-    if (stored) {
-      rows.push(buildRowFromStableBacktest(target, stored))
-      continue
-    }
-
-    const beforeHistory = history.slice(index + 1)
-
-    if (beforeHistory.length < getRequiredSampleSize(strategy)) continue
-
-    const analysis = buildRecommendByStrategy(beforeHistory, strategy)
-    const specialNumber = target.numbers[target.numbers.length - 1]
-
-    const recommendSet = new Set(analysis.recommendNumbers.map((item) => item.num))
-    const hotSet = new Set(analysis.hotNumbers.map((item) => item.num))
-    const coldSet = new Set(analysis.coldNumbers.map((item) => item.num))
-
-    const hit = recommendSet.has(specialNumber)
-    const hotHit = hotSet.has(specialNumber)
-    const coldHit = coldSet.has(specialNumber)
-
-    // 注意：这里不写 localStorage。
-    // 原来 V14 在切换策略时会一次性写入近100期，导致下拉框卡顿。
-    // 固定功能由 freezeNextStableBacktest 负责提前冻结下一期。
-    rows.push({
-      expect: target.expect,
-      openTime: target.openTime,
-      numbers: target.numbers,
-      specialNumber,
-      hit,
-      hotHit,
-      coldHit,
-      usedStrategyId: strategy.id,
-      usedStrategyLabel: strategy.label,
-      ...analysis,
-    })
-  }
-
-  return summarizeStableRows(rows)
+  return buildStableBacktestResult(history, selectedStrategyId, currentPlay, rangeSize, strategy)
 }
 
+function buildRealtimeSingleBacktest(history, targetExpect, strategy, selectedStrategyId = 'auto', currentPlay = 'macau') {
+  if (!history?.length || !targetExpect || !strategy) return null
+
+  const targetIndex = history.findIndex(
+    (item) => String(item.expect) === String(targetExpect)
+  )
+
+  if (targetIndex === -1) return null
+
+  const target = history[targetIndex]
+  const strategyId = selectedStrategyId || 'auto'
+  const stored = readStableBacktest(currentPlay, strategyId, target.expect)
+
+  if (stored) {
+    return {
+      target,
+      ...buildRowFromStableBacktest(target, stored, currentPlay, strategyId),
+    }
+  }
+
+  const beforeHistory = history.slice(targetIndex + 1)
+  if (beforeHistory.length < getRequiredSampleSize(strategy)) return null
+
+  const analysis = buildRecommendByStrategy(beforeHistory, strategy)
+  const newStored = writeStableBacktest(
+    currentPlay,
+    strategyId,
+    target.expect,
+    strategy,
+    analysis,
+    target,
+    'historical-first-view'
+  )
+
+  if (!newStored) return null
+
+  return {
+    target,
+    ...buildRowFromStableBacktest(target, newStored, currentPlay, strategyId),
+  }
+}
 
 function freezeNextStableBacktest(history, strategyRanking, currentPlay, nextExpect) {
   if (typeof window === 'undefined') return
@@ -548,28 +598,19 @@ function freezeNextStableBacktest(history, strategyRanking, currentPlay, nextExp
 
     targets.forEach(({ strategyId, strategy }) => {
       if (!strategy) return
-
-      const key = getStableBacktestKey(currentPlay, strategyId, nextExpect)
-
-      // 下一期如果已经冻结过，也不覆盖。
-      if (window.localStorage.getItem(key)) return
+      if (readStableBacktest(currentPlay, strategyId, nextExpect)) return
 
       const analysis = buildRecommendByStrategy(history, strategy)
 
-      window.localStorage.setItem(
-        key,
-        JSON.stringify({
-          version: 'stable-backtest-v14',
-          play: currentPlay,
-          strategyId: strategyId || 'auto',
-          expect: String(nextExpect),
-          generatedAt: Date.now(),
-          usedStrategyId: strategy.id || '',
-          usedStrategyLabel: strategy.label || '',
-          recommendNumbers: normalizeNumberList(analysis.recommendNumbers),
-          hotNumbers: normalizeNumberList(analysis.hotNumbers),
-          coldNumbers: normalizeNumberList(analysis.coldNumbers),
-        })
+      // 在开奖前保存下一期36码。开奖出现后只补充第一次命中状态，之后永不覆盖。
+      writeStableBacktest(
+        currentPlay,
+        strategyId,
+        nextExpect,
+        strategy,
+        analysis,
+        null,
+        'realtime-next-freeze'
       )
     })
   } catch (error) {
@@ -577,70 +618,46 @@ function freezeNextStableBacktest(history, strategyRanking, currentPlay, nextExp
   }
 }
 
-
 function freezeVisibleBacktestRows(rows, currentPlay, selectedStrategyId) {
   if (typeof window === 'undefined') return
   if (!rows?.length || !currentPlay) return
 
   const strategyId = selectedStrategyId || 'auto'
 
-  const tasks = rows
-    .filter((row) => row && row.expect && row.recommendNumbers)
-    .map((row) => ({
-      key: getStableBacktestKey(currentPlay, strategyId, row.expect),
-      row,
-    }))
+  rows.forEach((row) => {
+    if (!row?.expect || !row?.recommendNumbers) return
+    if (readStableBacktest(currentPlay, strategyId, row.expect)) return
 
-  if (!tasks.length) return
-
-  let index = 0
-
-  const runBatch = () => {
-    const end = Math.min(index + 8, tasks.length)
-
-    for (; index < end; index++) {
-      const { key, row } = tasks[index]
-
-      try {
-        // 核心：已经冻结过的期号，永远不覆盖。
-        if (window.localStorage.getItem(key)) continue
-
-        window.localStorage.setItem(
-          key,
-          JSON.stringify({
-            version: 'stable-backtest-v14',
-            play: currentPlay,
-            strategyId,
-            expect: String(row.expect),
-            generatedAt: Date.now(),
-            usedStrategyId: row.usedStrategyId || '',
-            usedStrategyLabel: row.usedStrategyLabel || '',
-            recommendNumbers: normalizeNumberList(row.recommendNumbers),
-            hotNumbers: normalizeNumberList(row.hotNumbers),
-            coldNumbers: normalizeNumberList(row.coldNumbers),
-          })
-        )
-      } catch (error) {
-        console.warn('后台冻结近100期回测失败', error)
-      }
+    const stored = {
+      version: STABLE_BACKTEST_VERSION,
+      play: currentPlay,
+      strategyId,
+      expect: String(row.expect),
+      generatedAt: Date.now(),
+      source: 'visible-row-freeze',
+      usedStrategyId: row.usedStrategyId || '',
+      usedStrategyLabel: row.usedStrategyLabel || '',
+      recommendNumbers: normalizeNumberList(row.recommendNumbers),
+      hotNumbers: normalizeNumberList(row.hotNumbers),
+      coldNumbers: normalizeNumberList(row.coldNumbers),
+      resultLocked: true,
+      resolvedAt: Date.now(),
+      specialNumber: Number(row.specialNumber),
+      hit: Boolean(row.hit),
+      hotHit: Boolean(row.hotHit),
+      coldHit: Boolean(row.coldHit),
     }
 
-    if (index < tasks.length) {
-      if (typeof window.requestIdleCallback === 'function') {
-        window.requestIdleCallback(runBatch, { timeout: 800 })
-      } else {
-        window.setTimeout(runBatch, 30)
-      }
+    try {
+      window.localStorage.setItem(
+        getStableBacktestKey(currentPlay, strategyId, row.expect),
+        JSON.stringify(stored)
+      )
+    } catch (error) {
+      console.warn('后台冻结近100期回测失败', error)
     }
-  }
-
-  if (typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(runBatch, { timeout: 800 })
-  } else {
-    window.setTimeout(runBatch, 30)
-  }
+  })
 }
-
 
 
 function Ball({ num, count, type, small = false, hit = false, hitType = 'special' }) {
@@ -1400,7 +1417,7 @@ export default function Page() {
       }
 
       function makeCellByStrategy(draw, strategy, index) {
-        const result = buildSingleBacktest(history, draw.expect, strategy)
+        const result = buildRealtimeSingleBacktest(history, draw.expect, strategy, strategy.id, currentPlay)
 
         return {
           rank: index + 1,
@@ -1591,10 +1608,12 @@ export default function Page() {
     return beforeRanking.find((item) => item.id === selectedStrategyId) || beforeRanking[0]
   }, [history, selectedExpect, selectedStrategyId, currentStrategy])
 
-  const singleBacktest = buildSingleBacktest(
+  const singleBacktest = buildRealtimeSingleBacktest(
     history,
     selectedExpect,
-    historicalStrategy
+    historicalStrategy,
+    selectedStrategyId,
+    currentPlay
   )
 
   const nextAnalysis =
@@ -1603,6 +1622,10 @@ export default function Page() {
       : null
 
   const nextExpect = getNextExpectByPlay(history, data, currentPlay)
+
+  React.useEffect(() => {
+    freezeNextStableBacktest(history, strategyRanking, currentPlay, nextExpect)
+  }, [history, strategyRanking, currentPlay, nextExpect])
 
   const nextRecommendNumbers = nextAnalysis?.recommendNumbers || []
   const nextHotNumbers = nextAnalysis?.hotNumbers || []
@@ -1623,8 +1646,8 @@ export default function Page() {
 
   const detailBacktest100 = React.useMemo(() => {
     if (!history.length || !currentStrategy) return null
-    return buildFastStableBacktestResult(history, currentStrategy, currentStrategy.id, currentPlay, 100)
-  }, [history, currentStrategy, currentPlay])
+    return buildFastStableBacktestResult(history, currentStrategy, selectedStrategyId, currentPlay, 100)
+  }, [history, currentStrategy, selectedStrategyId, currentPlay])
 
   const detailBacktest50 = React.useMemo(() => {
     if (!detailBacktest100?.rows?.length) return null
