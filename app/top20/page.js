@@ -37,23 +37,21 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
 }
 
 
-function getTop20FreezeKey(play, expect) {
-  return `marksix-freeze-top20-${play}-${expect}`
+
+const STABLE_BACKTEST_VERSION = 'stable-backtest-v16'
+const LEGACY_STABLE_BACKTEST_VERSION = 'stable-backtest-v15'
+const TOP20_REALTIME_SNAPSHOT_VERSION = 'top20-realtime-snapshot-v16'
+
+function getStableBacktestKey(play, strategyId, expect) {
+  return `marksix-stable-backtest-v16-${play}-${strategyId || 'auto'}-${expect}`
 }
 
-function readTop20Freeze(play, expect) {
-  if (typeof window === 'undefined' || !play || !expect) return null
-  try {
-    const raw = window.localStorage.getItem(getTop20FreezeKey(play, expect))
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    if (parsed?.version === 'freeze-v11' && parsed?.play === play && String(parsed?.expect) === String(expect)) {
-      return parsed
-    }
-  } catch (error) {
-    console.warn('读取冻结数据失败', error)
-  }
-  return null
+function getLegacyStableBacktestKey(play, strategyId, expect) {
+  return `marksix-stable-backtest-v15-${play}-${strategyId || 'auto'}-${expect}`
+}
+
+function getTop20RealtimeSnapshotKey(play, expect) {
+  return `marksix-top20-realtime-snapshot-v16-${play}-${expect}`
 }
 
 function numberItemsToNumbers(items) {
@@ -62,22 +60,186 @@ function numberItemsToNumbers(items) {
     .filter((num) => Number.isInteger(num) && num >= 1 && num <= 49)
 }
 
-function makeFrozenHitCell(draw, frozenRow) {
-  const specialNumber = Number(draw?.numbers?.[draw.numbers.length - 1])
-  const recommendSet = new Set((frozenRow?.recommendNumbers || []).map(Number))
-  const hotSet = new Set((frozenRow?.hotNumbers || []).map(Number))
-  const coldSet = new Set((frozenRow?.coldNumbers || []).map(Number))
-  const hit = recommendSet.has(specialNumber)
-  const hotHit = hotSet.has(specialNumber)
-  const coldHit = coldSet.has(specialNumber)
+function isStableBacktestRecord(parsed, play, strategyId, expect) {
+  return (
+    parsed &&
+    parsed.play === play &&
+    parsed.strategyId === (strategyId || 'auto') &&
+    String(parsed.expect) === String(expect)
+  )
+}
+
+function readStableBacktest(play, strategyId, expect) {
+  if (typeof window === 'undefined' || !play || !expect) return null
+
+  try {
+    const key = getStableBacktestKey(play, strategyId, expect)
+    const currentRaw = window.localStorage.getItem(key)
+
+    if (currentRaw) {
+      const currentParsed = JSON.parse(currentRaw)
+      if (
+        currentParsed?.version === STABLE_BACKTEST_VERSION &&
+        isStableBacktestRecord(currentParsed, play, strategyId, expect)
+      ) {
+        return currentParsed
+      }
+    }
+
+    const legacyRaw = window.localStorage.getItem(
+      getLegacyStableBacktestKey(play, strategyId, expect)
+    )
+
+    if (!legacyRaw) return null
+
+    const legacyParsed = JSON.parse(legacyRaw)
+    const isRealtimeLegacy =
+      legacyParsed?.version === LEGACY_STABLE_BACKTEST_VERSION &&
+      isStableBacktestRecord(legacyParsed, play, strategyId, expect) &&
+      String(legacyParsed?.source || '').startsWith('realtime-next-freeze')
+
+    if (!isRealtimeLegacy) return null
+
+    const migrated = {
+      ...legacyParsed,
+      version: STABLE_BACKTEST_VERSION,
+      migratedFrom: LEGACY_STABLE_BACKTEST_VERSION,
+      migratedAt: Date.now(),
+      source: 'realtime-next-freeze-migrated-v15',
+    }
+
+    if (!window.localStorage.getItem(key)) {
+      window.localStorage.setItem(key, JSON.stringify(migrated))
+    }
+
+    return migrated
+  } catch (error) {
+    console.warn('读取实时冻结数据失败', error)
+  }
+
+  return null
+}
+
+function finalizeStableBacktestOutcome(play, strategyId, draw, stored) {
+  if (!stored || !draw?.numbers?.length) return stored
+  if (stored.resultLocked) return stored
+
+  const specialNumber = Number(draw.numbers[draw.numbers.length - 1])
+  const recommendSet = new Set(numberItemsToNumbers(stored.recommendNumbers))
+  const hotSet = new Set(numberItemsToNumbers(stored.hotNumbers))
+  const coldSet = new Set(numberItemsToNumbers(stored.coldNumbers))
+
+  const resolved = {
+    ...stored,
+    resultLocked: true,
+    resolvedAt: Date.now(),
+    specialNumber,
+    hit: recommendSet.has(specialNumber),
+    hotHit: hotSet.has(specialNumber),
+    coldHit: coldSet.has(specialNumber),
+  }
+
+  try {
+    window.localStorage.setItem(
+      getStableBacktestKey(play, strategyId, draw.expect),
+      JSON.stringify(resolved)
+    )
+  } catch (error) {
+    console.warn('锁定当期开奖结果失败', error)
+  }
+
+  return resolved
+}
+
+function readTop20RealtimeSnapshot(play, expect) {
+  if (typeof window === 'undefined' || !play || !expect) return null
+
+  try {
+    const raw = window.localStorage.getItem(getTop20RealtimeSnapshotKey(play, expect))
+    if (!raw) return null
+
+    const parsed = JSON.parse(raw)
+    if (
+      parsed?.version === TOP20_REALTIME_SNAPSHOT_VERSION &&
+      parsed?.play === play &&
+      String(parsed?.expect) === String(expect) &&
+      Array.isArray(parsed?.strategies)
+    ) {
+      return parsed
+    }
+  } catch (error) {
+    console.warn('读取20档位实时快照失败', error)
+  }
+
+  return null
+}
+
+function makeFrozenHitCell(draw, stored, play, strategyId) {
+  if (!stored) {
+    return {
+      hit: false,
+      hotHit: false,
+      coldHit: false,
+      unavailable: true,
+      status: '无实时记录',
+      shortStatus: '无记录',
+    }
+  }
+
+  const resolved = finalizeStableBacktestOutcome(play, strategyId, draw, stored) || stored
+
   return {
-    hit,
-    hotHit,
-    coldHit,
-    status: hotHit ? '热码命中' : coldHit ? '冷码命中' : hit ? '命中' : '未中',
-    shortStatus: hotHit ? '热中' : coldHit ? '冷中' : hit ? '中' : '未中',
+    hit: Boolean(resolved.hit),
+    hotHit: Boolean(resolved.hotHit),
+    coldHit: Boolean(resolved.coldHit),
+    unavailable: false,
+    status: resolved.hotHit ? '热码命中' : resolved.coldHit ? '冷码命中' : resolved.hit ? '命中' : '未中',
+    shortStatus: resolved.hotHit ? '热中' : resolved.coldHit ? '冷中' : resolved.hit ? '中' : '未中',
   }
 }
+
+function summarizeStableRows(rows = []) {
+  const testedCount = rows.length
+  const hitCount = rows.filter((item) => item.hit).length
+  const hotHitCount = rows.filter((item) => item.hotHit).length
+  const coldHitCount = rows.filter((item) => item.coldHit).length
+  const hitRate = testedCount ? Number(((hitCount / testedCount) * 100).toFixed(2)) : 0
+  const hotHitRate = testedCount ? Number(((hotHitCount / testedCount) * 100).toFixed(2)) : 0
+  const coldHitRate = testedCount ? Number(((coldHitCount / testedCount) * 100).toFixed(2)) : 0
+
+  return {
+    testedCount,
+    hitCount,
+    hotHitCount,
+    coldHitCount,
+    hitRate,
+    hotHitRate,
+    coldHitRate,
+    rows,
+  }
+}
+
+function buildStableStatsForStrategy(history, play, strategyId, rangeSize = 100) {
+  const rows = []
+
+  for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
+    const draw = history[index]
+    const stored = readStableBacktest(play, strategyId, draw.expect)
+    if (!stored) continue
+
+    const resolved = finalizeStableBacktestOutcome(play, strategyId, draw, stored) || stored
+
+    rows.push({
+      expect: draw.expect,
+      hit: Boolean(resolved.hit),
+      hotHit: Boolean(resolved.hotHit),
+      coldHit: Boolean(resolved.coldHit),
+    })
+  }
+
+  return summarizeStableRows(rows)
+}
+
 
 function makeStrategies() {
   const samples = [30, 50, 80, 100, 150]
@@ -531,28 +693,45 @@ function getShortStrategyLabel(strategy) {
     .replace('特码遗漏加权｜', '遗漏｜')
 }
 
-function buildTop20DrawStats(history, strategyRanking, rangeSize = 30) {
-  if (!history?.length || !strategyRanking?.length) return null
 
-  // V4：第1名到第20名，固定同步首页“策略选择”下拉框的第1名到第20名
-  const top20 = strategyRanking.slice(0, 20)
+function buildTop20DrawStats(history, currentPlay, rangeSize = 30) {
+  if (!history?.length || !currentPlay) return null
+
   const latest = history[0]
   const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
+  const latestSnapshot = readTop20RealtimeSnapshot(currentPlay, latest.expect)
 
-  const latestStats = top20.map((strategy, index) => {
-    const result = buildSingleBacktest(history, latest.expect, strategy)
+  if (!latestSnapshot) {
+    return {
+      latest,
+      latestSpecial,
+      latestStats: [],
+      hitRanks: [],
+      recentRows: [],
+      hasRealtimeRecord: false,
+    }
+  }
+
+  const latestStats = latestSnapshot.strategies.slice(0, 20).map((strategy, index) => {
+    const stored = readStableBacktest(currentPlay, strategy.id, latest.expect)
+    const cell = makeFrozenHitCell(latest, stored, currentPlay, strategy.id)
+    const result100 = buildStableStatsForStrategy(history, currentPlay, strategy.id, 100)
+    const result50 = summarizeStableRows(result100.rows.slice(0, 50))
+    const result30 = summarizeStableRows(result100.rows.slice(0, 30))
 
     return {
       rank: index + 1,
-      strategy,
+      strategy: {
+        ...strategy,
+        result100,
+        result50,
+        result30,
+      },
       label: getShortStrategyLabel(strategy),
       expect: latest.expect,
       openTime: latest.openTime,
       specialNumber: latestSpecial,
-      hit: Boolean(result?.hit),
-      hotHit: Boolean(result?.hotHit),
-      coldHit: Boolean(result?.coldHit),
-      status: result?.hotHit ? '热码命中' : result?.coldHit ? '冷码命中' : result?.hit ? '命中' : '未中',
+      ...cell,
     }
   })
 
@@ -560,18 +739,36 @@ function buildTop20DrawStats(history, strategyRanking, rangeSize = 30) {
 
   const recentRows = history.slice(0, rangeSize).map((draw) => {
     const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
+    const snapshot = readTop20RealtimeSnapshot(currentPlay, draw.expect)
 
-    const cells = top20.map((strategy, index) => {
-      const result = buildSingleBacktest(history, draw.expect, strategy)
+    if (!snapshot) {
+      return {
+        expect: draw.expect,
+        openTime: draw.openTime,
+        specialNumber,
+        cells: latestSnapshot.strategies.slice(0, 20).map((_, index) => ({
+          rank: index + 1,
+          hit: false,
+          hotHit: false,
+          coldHit: false,
+          unavailable: true,
+          status: '无实时记录',
+        })),
+      }
+    }
+
+    const cells = snapshot.strategies.slice(0, 20).map((strategy, index) => {
+      const stored = readStableBacktest(currentPlay, strategy.id, draw.expect)
+      const cell = makeFrozenHitCell(draw, stored, currentPlay, strategy.id)
 
       return {
         rank: index + 1,
-        strategy,
+        strategyId: strategy.id,
         strategyLabel: strategy.label,
-        hit: Boolean(result?.hit),
-        hotHit: Boolean(result?.hotHit),
-        coldHit: Boolean(result?.coldHit),
-        status: result?.hotHit ? '热中' : result?.coldHit ? '冷中' : result?.hit ? '中' : '未中',
+        usedStrategyId: strategy.id,
+        usedStrategyLabel: strategy.label,
+        ...cell,
+        status: cell.shortStatus,
       }
     })
 
@@ -589,6 +786,7 @@ function buildTop20DrawStats(history, strategyRanking, rangeSize = 30) {
     latestStats,
     hitRanks,
     recentRows,
+    hasRealtimeRecord: true,
   }
 }
 
@@ -1147,13 +1345,16 @@ function formatHeadList(list) {
 }
 
 export default function Top20StatsPage() {
-  const [currentPlay, setCurrentPlay] = React.useState('macau')
+  const [currentPlay, setCurrentPlay] = React.useState(() => {
+    if (typeof window === 'undefined') return 'macau'
+    const params = new URLSearchParams(window.location.search)
+    return params.get('play') === 'hongkong' ? 'hongkong' : 'macau'
+  })
   const [data, setData] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
   const [totalBetPerIssue, setTotalBetPerIssue] = React.useState(3600)
   const [odds, setOdds] = React.useState(47)
-  const [homeSnapshot, setHomeSnapshot] = React.useState(null)
 
   const playConfig = PLAY_CONFIG[currentPlay]
   const history = data?.history || []
@@ -1196,53 +1397,24 @@ export default function Top20StatsPage() {
     }
   }, [playConfig.api, playConfig.name])
 
+  const changePlay = (play) => {
+    if (!PLAY_CONFIG[play]) return
+    setCurrentPlay(play)
+
+    if (typeof window !== 'undefined') {
+      window.history.pushState(null, '', `/top20?play=${play}`)
+    }
+  }
+
   React.useEffect(() => {
     loadData()
   }, [loadData])
 
-  React.useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(`marksix-top20-home-snapshot-${currentPlay}`)
-
-      if (!raw) {
-        setHomeSnapshot(null)
-        return
-      }
-
-      const parsed = JSON.parse(raw)
-
-      if (parsed?.play === currentPlay && parsed?.version === 'home-sync-v11-freeze-future') {
-        setHomeSnapshot(parsed)
-      } else {
-        setHomeSnapshot(null)
-      }
-    } catch (error) {
-      console.warn('读取首页同步数据失败', error)
-      setHomeSnapshot(null)
-    }
-  }, [currentPlay, data])
-
-  const strategyRanking = React.useMemo(() => {
-    if (!history.length) return []
-    return buildStrategyRanking(history)
-  }, [history])
-
-  const computedTop20DrawStats = React.useMemo(() => {
-    if (!history.length || !strategyRanking.length) return null
-    return buildTop20DrawStats(history, strategyRanking, 30)
-  }, [history, strategyRanking])
 
   const top20DrawStats = React.useMemo(() => {
-    if (
-      homeSnapshot &&
-      homeSnapshot.play === currentPlay &&
-      (!history[0]?.expect || String(homeSnapshot.latest?.expect) === String(history[0]?.expect))
-    ) {
-      return homeSnapshot
-    }
-
-    return computedTop20DrawStats
-  }, [homeSnapshot, currentPlay, history, computedTop20DrawStats])
+    if (!history.length) return null
+    return buildTop20DrawStats(history, currentPlay, 30)
+  }, [history, currentPlay])
 
   const headStats = React.useMemo(() => {
     if (!history.length) return []
@@ -1260,14 +1432,6 @@ export default function Top20StatsPage() {
   }, [history])
 
   const latest = history[0]
-  const finance100 = strategyRanking[0]
-    ? calculateProfit(
-        strategyRanking[0].result100.hitCount,
-        strategyRanking[0].result100.testedCount,
-        totalBetPerIssue,
-        odds
-      )
-    : null
 
   async function copyAggregateHeads() {
     const text = formatHeadCopyText(headAggregateStats?.nextRecommend?.recommendHeads || [])
@@ -1532,15 +1696,18 @@ export default function Top20StatsPage() {
           </p>
 
           <div className="switch-row">
+            <button className="btn secondary" onClick={() => window.history.back()}>
+              返回上一页
+            </button>
             <button
               className={`btn secondary ${currentPlay === 'macau' ? 'active' : ''}`}
-              onClick={() => setCurrentPlay('macau')}
+              onClick={() => changePlay('macau')}
             >
               澳门玩法
             </button>
             <button
               className={`btn secondary ${currentPlay === 'hongkong' ? 'active' : ''}`}
-              onClick={() => setCurrentPlay('hongkong')}
+              onClick={() => changePlay('hongkong')}
             >
               香港玩法
             </button>
@@ -1568,7 +1735,7 @@ export default function Top20StatsPage() {
             </div>
             <p className="desc">
               当期特码：{formatNumber(top20DrawStats.latestSpecial)}。
-              下面统计当期开奖之前的策略排行榜前20名档位，每个档位筛选36码后，是否命中当期最后的特码。
+              下面读取首页在当期开奖前已经保存的前20名档位。所有100期、50期和30期数据均来自同一份实时冻结记录。
             </p>
 
             <div className="summary-grid">
@@ -1618,9 +1785,17 @@ export default function Top20StatsPage() {
                   </div>
                 ))
               ) : (
-                <div className="no-hit-chip">当期前20名档位暂无命中</div>
+                <div className="no-hit-chip">
+                  {top20DrawStats.hasRealtimeRecord ? '当期前20名档位暂无命中' : '当期没有开奖前保存的实时记录'}
+                </div>
               )}
             </div>
+
+            {!top20DrawStats.hasRealtimeRecord && (
+              <div className="error" style={{ margin: '16px 0 0' }}>
+                当前期号没有首页在开奖前保存的20档位实时快照，因此本页不会生成事后回算数据。安装V16后，从下一期开奖开始自动积累真实记录。
+              </div>
+            )}
 
             <div className="table-wrap">
               <table>
@@ -1843,9 +2018,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V11.1开奖前冻结修复版】</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V16严格实时冻结版】</div>
             <p className="desc">
-              【V11.1开奖前冻结修复版已生效】下一期36码会在开奖前冻结保存；开奖后历史结果不会被新数据改写。
+              【V16严格实时冻结版】只显示开奖前保存的数据。没有实时记录的旧期号显示“无实时记录”；已经锁定的中奖或未中奖状态不会再改变。
             </p>
 
             <div className="table-wrap">
@@ -1872,7 +2047,7 @@ export default function Top20StatsPage() {
                           className={cell.hit ? 'hit-cell' : 'miss-cell'}
                           title={`首页策略：${cell.strategyLabel || cell.strategy?.label || ''}；当期计算策略：${cell.usedStrategyLabel || cell.strategyLabel || cell.strategy?.label || ''}`}
                         >
-                          {cell.hit ? cell.status : '未中'}
+                          {cell.status}
                         </td>
                       ))}
                     </tr>
