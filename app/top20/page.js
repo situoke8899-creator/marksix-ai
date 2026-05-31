@@ -151,6 +151,55 @@ function finalizeStableBacktestOutcome(play, strategyId, draw, stored) {
   return resolved
 }
 
+function writeHistoricalBaselineBacktest(play, strategyId, draw, strategy, analysis) {
+  if (typeof window === 'undefined' || !play || !draw?.expect || !strategy || !analysis) return null
+
+  try {
+    const existed = readStableBacktest(play, strategyId, draw.expect)
+    if (existed) return existed
+
+    const stored = {
+      version: STABLE_BACKTEST_VERSION,
+      play,
+      strategyId: strategyId || 'auto',
+      expect: String(draw.expect),
+      generatedAt: Date.now(),
+      source: 'historical-baseline-freeze-v17',
+      usedStrategyId: strategy.id || '',
+      usedStrategyLabel: strategy.label || '',
+      recommendNumbers: numberItemsToNumbers(analysis.recommendNumbers),
+      hotNumbers: numberItemsToNumbers(analysis.hotNumbers),
+      coldNumbers: numberItemsToNumbers(analysis.coldNumbers),
+      resultLocked: false,
+    }
+
+    window.localStorage.setItem(
+      getStableBacktestKey(play, strategyId, draw.expect),
+      JSON.stringify(stored)
+    )
+
+    return stored
+  } catch (error) {
+    console.warn('保存历史基准冻结数据失败', error)
+  }
+
+  return null
+}
+
+function ensureStableBacktestRow(history, index, strategy, play) {
+  const draw = history?.[index]
+  if (!draw || !strategy || !play) return null
+
+  const existed = readStableBacktest(play, strategy.id, draw.expect)
+  if (existed) return existed
+
+  const beforeHistory = history.slice(index + 1)
+  if (beforeHistory.length < getRequiredSampleSize(strategy)) return null
+
+  const analysis = buildRecommendByStrategy(beforeHistory, strategy)
+  return writeHistoricalBaselineBacktest(play, strategy.id, draw, strategy, analysis)
+}
+
 function readTop20RealtimeSnapshot(play, expect) {
   if (typeof window === 'undefined' || !play || !expect) return null
 
@@ -219,15 +268,17 @@ function summarizeStableRows(rows = []) {
   }
 }
 
-function buildStableStatsForStrategy(history, play, strategyId, rangeSize = 100) {
+function buildStableStatsForStrategy(history, play, strategy, rangeSize = 100) {
   const rows = []
+
+  if (!history?.length || !strategy) return summarizeStableRows(rows)
 
   for (let index = 0; index < history.length && rows.length < rangeSize; index++) {
     const draw = history[index]
-    const stored = readStableBacktest(play, strategyId, draw.expect)
+    const stored = ensureStableBacktestRow(history, index, strategy, play)
     if (!stored) continue
 
-    const resolved = finalizeStableBacktestOutcome(play, strategyId, draw, stored) || stored
+    const resolved = finalizeStableBacktestOutcome(play, strategy.id, draw, stored) || stored
 
     rows.push({
       expect: draw.expect,
@@ -238,6 +289,30 @@ function buildStableStatsForStrategy(history, play, strategyId, rangeSize = 100)
   }
 
   return summarizeStableRows(rows)
+}
+
+function buildRealtimeStrategyRanking(history, play) {
+  if (!history?.length || !play) return []
+
+  return buildStrategyRanking(history)
+    .slice(0, 20)
+    .map((strategy) => {
+      const result100 = buildStableStatsForStrategy(history, play, strategy, 100)
+      const result50 = summarizeStableRows(result100.rows.slice(0, 50))
+      const score = Number(((Number(result100.hitRate) || 0) * 0.7 + (Number(result50.hitRate) || 0) * 0.3).toFixed(2))
+
+      return {
+        ...strategy,
+        result100,
+        result50,
+        score,
+      }
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      if (b.result100.hitRate !== a.result100.hitRate) return b.result100.hitRate - a.result100.hitRate
+      return b.result50.hitRate - a.result50.hitRate
+    })
 }
 
 
@@ -697,34 +772,22 @@ function getShortStrategyLabel(strategy) {
 function buildTop20DrawStats(history, currentPlay, rangeSize = 30) {
   if (!history?.length || !currentPlay) return null
 
+  // 与首页保持一致：先使用同一套100期冻结数据重新排序，再展示前20名。
+  const top20 = buildRealtimeStrategyRanking(history, currentPlay).slice(0, 20)
+  if (!top20.length) return null
+
   const latest = history[0]
   const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
-  const latestSnapshot = readTop20RealtimeSnapshot(currentPlay, latest.expect)
 
-  if (!latestSnapshot) {
-    return {
-      latest,
-      latestSpecial,
-      latestStats: [],
-      hitRanks: [],
-      recentRows: [],
-      hasRealtimeRecord: false,
-    }
-  }
-
-  const latestStats = latestSnapshot.strategies.slice(0, 20).map((strategy, index) => {
-    const stored = readStableBacktest(currentPlay, strategy.id, latest.expect)
+  const latestStats = top20.map((strategy, index) => {
+    const stored = ensureStableBacktestRow(history, 0, strategy, currentPlay)
     const cell = makeFrozenHitCell(latest, stored, currentPlay, strategy.id)
-    const result100 = buildStableStatsForStrategy(history, currentPlay, strategy.id, 100)
-    const result50 = summarizeStableRows(result100.rows.slice(0, 50))
-    const result30 = summarizeStableRows(result100.rows.slice(0, 30))
+    const result30 = summarizeStableRows(strategy.result100.rows.slice(0, 30))
 
     return {
       rank: index + 1,
       strategy: {
         ...strategy,
-        result100,
-        result50,
         result30,
       },
       label: getShortStrategyLabel(strategy),
@@ -737,28 +800,11 @@ function buildTop20DrawStats(history, currentPlay, rangeSize = 30) {
 
   const hitRanks = latestStats.filter((item) => item.hit)
 
-  const recentRows = history.slice(0, rangeSize).map((draw) => {
+  const recentRows = history.slice(0, rangeSize).map((draw, drawIndex) => {
     const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
-    const snapshot = readTop20RealtimeSnapshot(currentPlay, draw.expect)
 
-    if (!snapshot) {
-      return {
-        expect: draw.expect,
-        openTime: draw.openTime,
-        specialNumber,
-        cells: latestSnapshot.strategies.slice(0, 20).map((_, index) => ({
-          rank: index + 1,
-          hit: false,
-          hotHit: false,
-          coldHit: false,
-          unavailable: true,
-          status: '无实时记录',
-        })),
-      }
-    }
-
-    const cells = snapshot.strategies.slice(0, 20).map((strategy, index) => {
-      const stored = readStableBacktest(currentPlay, strategy.id, draw.expect)
+    const cells = top20.map((strategy, index) => {
+      const stored = ensureStableBacktestRow(history, drawIndex, strategy, currentPlay)
       const cell = makeFrozenHitCell(draw, stored, currentPlay, strategy.id)
 
       return {
@@ -1793,7 +1839,7 @@ export default function Top20StatsPage() {
 
             {!top20DrawStats.hasRealtimeRecord && (
               <div className="error" style={{ margin: '16px 0 0' }}>
-                当前期号没有首页在开奖前保存的20档位实时快照，因此本页不会生成事后回算数据。安装V16后，从下一期开奖开始自动积累真实记录。
+                旧历史首次打开时会生成一次基准回测并立即冻结；从下一期开奖开始继续使用开奖前保存的实时号码。
               </div>
             )}
 
@@ -2018,9 +2064,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V16严格实时冻结版】</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V17基准冻结修复版】</div>
             <p className="desc">
-              【V16严格实时冻结版】只显示开奖前保存的数据。没有实时记录的旧期号显示“无实时记录”；已经锁定的中奖或未中奖状态不会再改变。
+              【V17基准冻结修复版】旧历史会按当期以前的数据生成一次基准结果并立即冻结；后续新增开奖不会改写旧期号。首页100期数据与本页20档位统计使用同一份冻结记录。
             </p>
 
             <div className="table-wrap">
