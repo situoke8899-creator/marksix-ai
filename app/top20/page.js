@@ -38,20 +38,25 @@ function calculateProfit(hitCount, testedCount, totalBetPerIssue = 3600, odds = 
 
 
 
-const STABLE_BACKTEST_VERSION = 'stable-backtest-v16'
-const LEGACY_STABLE_BACKTEST_VERSION = 'stable-backtest-v15'
-const TOP20_REALTIME_SNAPSHOT_VERSION = 'top20-realtime-snapshot-v16'
+const STABLE_BACKTEST_VERSION = 'stable-backtest-v19'
+const TOP20_REALTIME_SNAPSHOT_VERSION = 'top20-realtime-snapshot-v19'
+const LEGACY_STABLE_BACKTEST_VERSIONS = ['v16', 'v15']
+const LEGACY_TOP20_SNAPSHOT_VERSIONS = ['v16']
 
 function getStableBacktestKey(play, strategyId, expect) {
-  return `marksix-stable-backtest-v16-${play}-${strategyId || 'auto'}-${expect}`
+  return `marksix-stable-backtest-v19-${play}-${strategyId || 'auto'}-${expect}`
 }
 
-function getLegacyStableBacktestKey(play, strategyId, expect) {
-  return `marksix-stable-backtest-v15-${play}-${strategyId || 'auto'}-${expect}`
+function getLegacyStableBacktestKey(version, play, strategyId, expect) {
+  return `marksix-stable-backtest-${version}-${play}-${strategyId || 'auto'}-${expect}`
 }
 
 function getTop20RealtimeSnapshotKey(play, expect) {
-  return `marksix-top20-realtime-snapshot-v16-${play}-${expect}`
+  return `marksix-top20-realtime-snapshot-v19-${play}-${expect}`
+}
+
+function getLegacyTop20RealtimeSnapshotKey(version, play, expect) {
+  return `marksix-top20-realtime-snapshot-${version}-${play}-${expect}`
 }
 
 function numberItemsToNumbers(items) {
@@ -69,6 +74,144 @@ function isStableBacktestRecord(parsed, play, strategyId, expect) {
   )
 }
 
+function isQuotaError(error) {
+  return (
+    error?.name === 'QuotaExceededError' ||
+    error?.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    Number(error?.code) === 22 ||
+    Number(error?.code) === 1014
+  )
+}
+
+function sortStoredItemsNewestFirst(a, b) {
+  const timeDiff = Number(b.generatedAt || b.resolvedAt || 0) - Number(a.generatedAt || a.resolvedAt || 0)
+  if (timeDiff !== 0) return timeDiff
+  return String(b.expect || '').localeCompare(String(a.expect || ''), undefined, { numeric: true })
+}
+
+function cleanupStableStorage(play, aggressive = false) {
+  if (typeof window === 'undefined' || !play) return
+
+  try {
+    const removeKeys = new Set()
+    const realtimeItems = []
+    const snapshotItems = []
+    const historicalSources = ['historical-baseline', 'visible-row-freeze', 'historical-first-view']
+
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index)
+      if (!key) continue
+
+      const isStableKey =
+        key.startsWith(`marksix-stable-backtest-v19-${play}-`) ||
+        key.startsWith(`marksix-stable-backtest-v16-${play}-`) ||
+        key.startsWith(`marksix-stable-backtest-v15-${play}-`)
+
+      const isSnapshotKey =
+        key.startsWith(`marksix-top20-realtime-snapshot-v19-${play}-`) ||
+        key.startsWith(`marksix-top20-realtime-snapshot-v16-${play}-`)
+
+      if (!isStableKey && !isSnapshotKey) continue
+
+      let parsed = null
+      try {
+        parsed = JSON.parse(window.localStorage.getItem(key) || 'null')
+      } catch (error) {
+        removeKeys.add(key)
+        continue
+      }
+
+      if (isStableKey) {
+        const source = String(parsed?.source || '')
+        if (!parsed || historicalSources.some((item) => source.includes(item))) {
+          removeKeys.add(key)
+          continue
+        }
+
+        if (source.startsWith('realtime-next-freeze')) {
+          realtimeItems.push({ key, ...parsed })
+        } else if (aggressive) {
+          removeKeys.add(key)
+        }
+      }
+
+      if (isSnapshotKey) {
+        if (!parsed || !Array.isArray(parsed.strategies)) {
+          removeKeys.add(key)
+          continue
+        }
+        snapshotItems.push({ key, ...parsed })
+      }
+    }
+
+    const keepRealtimeCount = aggressive ? 1800 : 3200
+    const keepSnapshotCount = aggressive ? 160 : 260
+
+    realtimeItems
+      .sort(sortStoredItemsNewestFirst)
+      .slice(keepRealtimeCount)
+      .forEach((item) => removeKeys.add(item.key))
+
+    snapshotItems
+      .sort(sortStoredItemsNewestFirst)
+      .slice(keepSnapshotCount)
+      .forEach((item) => removeKeys.add(item.key))
+
+    removeKeys.forEach((key) => window.localStorage.removeItem(key))
+  } catch (error) {
+    console.warn('清理冻结缓存失败', error)
+  }
+}
+
+function safeSetLocalStorage(key, value, play) {
+  if (typeof window === 'undefined') return false
+
+  try {
+    window.localStorage.setItem(key, value)
+    return true
+  } catch (error) {
+    if (!isQuotaError(error)) {
+      console.warn('保存冻结缓存失败', error)
+      return false
+    }
+  }
+
+  cleanupStableStorage(play, true)
+
+  try {
+    window.localStorage.setItem(key, value)
+    return true
+  } catch (error) {
+    console.warn('浏览器本地缓存空间不足，已清理旧历史基准记录，但保存仍然失败', error)
+    return false
+  }
+}
+
+function compactStableRecord(record) {
+  return {
+    version: STABLE_BACKTEST_VERSION,
+    play: record.play,
+    strategyId: record.strategyId || 'auto',
+    expect: String(record.expect),
+    generatedAt: Number(record.generatedAt || Date.now()),
+    source: record.source || 'realtime-next-freeze-v19',
+    usedStrategyId: record.usedStrategyId || record.strategyId || '',
+    recommendNumbers: numberItemsToNumbers(record.recommendNumbers),
+    hotNumbers: numberItemsToNumbers(record.hotNumbers),
+    coldNumbers: numberItemsToNumbers(record.coldNumbers),
+    resultLocked: Boolean(record.resultLocked),
+    ...(record.resultLocked
+      ? {
+          resolvedAt: Number(record.resolvedAt || Date.now()),
+          specialNumber: Number(record.specialNumber),
+          hit: Boolean(record.hit),
+          hotHit: Boolean(record.hotHit),
+          coldHit: Boolean(record.coldHit),
+        }
+      : {}),
+  }
+}
+
 function readStableBacktest(play, strategyId, expect) {
   if (typeof window === 'undefined' || !play || !expect) return null
 
@@ -82,55 +225,45 @@ function readStableBacktest(play, strategyId, expect) {
         currentParsed?.version === STABLE_BACKTEST_VERSION &&
         isStableBacktestRecord(currentParsed, play, strategyId, expect)
       ) {
-        return currentParsed
+        return { ...currentParsed, persisted: true }
       }
     }
 
-    const legacyRaw = window.localStorage.getItem(
-      getLegacyStableBacktestKey(play, strategyId, expect)
-    )
+    for (const version of LEGACY_STABLE_BACKTEST_VERSIONS) {
+      const legacyRaw = window.localStorage.getItem(
+        getLegacyStableBacktestKey(version, play, strategyId, expect)
+      )
+      if (!legacyRaw) continue
 
-    if (!legacyRaw) return null
+      const legacyParsed = JSON.parse(legacyRaw)
+      const isRealtimeLegacy =
+        isStableBacktestRecord(legacyParsed, play, strategyId, expect) &&
+        String(legacyParsed?.source || '').startsWith('realtime-next-freeze')
 
-    const legacyParsed = JSON.parse(legacyRaw)
-    const isRealtimeLegacy =
-      legacyParsed?.version === LEGACY_STABLE_BACKTEST_VERSION &&
-      isStableBacktestRecord(legacyParsed, play, strategyId, expect) &&
-      String(legacyParsed?.source || '').startsWith('realtime-next-freeze')
+      if (!isRealtimeLegacy) continue
 
-    if (!isRealtimeLegacy) return null
+      const migrated = compactStableRecord({
+        ...legacyParsed,
+        source: `realtime-next-freeze-migrated-${version}`,
+      })
 
-    const migrated = {
-      ...legacyParsed,
-      version: STABLE_BACKTEST_VERSION,
-      migratedFrom: LEGACY_STABLE_BACKTEST_VERSION,
-      migratedAt: Date.now(),
-      source: 'realtime-next-freeze-migrated-v15',
+      safeSetLocalStorage(key, JSON.stringify(migrated), play)
+      return { ...migrated, persisted: true }
     }
-
-    if (!window.localStorage.getItem(key)) {
-      window.localStorage.setItem(key, JSON.stringify(migrated))
-    }
-
-    return migrated
   } catch (error) {
-    console.warn('读取实时冻结数据失败', error)
+    console.warn('读取冻结回测数据失败', error)
   }
 
   return null
 }
 
-function finalizeStableBacktestOutcome(play, strategyId, draw, stored) {
-  if (!stored || !draw?.numbers?.length) return stored
-  if (stored.resultLocked) return stored
+function makeLockedOutcome(draw, stored) {
+  const specialNumber = Number(draw?.numbers?.[draw.numbers.length - 1])
+  const recommendSet = new Set(numberItemsToNumbers(stored?.recommendNumbers))
+  const hotSet = new Set(numberItemsToNumbers(stored?.hotNumbers))
+  const coldSet = new Set(numberItemsToNumbers(stored?.coldNumbers))
 
-  const specialNumber = Number(draw.numbers[draw.numbers.length - 1])
-  const recommendSet = new Set(numberItemsToNumbers(stored.recommendNumbers))
-  const hotSet = new Set(numberItemsToNumbers(stored.hotNumbers))
-  const coldSet = new Set(numberItemsToNumbers(stored.coldNumbers))
-
-  const resolved = {
-    ...stored,
+  return {
     resultLocked: true,
     resolvedAt: Date.now(),
     specialNumber,
@@ -138,52 +271,51 @@ function finalizeStableBacktestOutcome(play, strategyId, draw, stored) {
     hotHit: hotSet.has(specialNumber),
     coldHit: coldSet.has(specialNumber),
   }
-
-  try {
-    window.localStorage.setItem(
-      getStableBacktestKey(play, strategyId, draw.expect),
-      JSON.stringify(resolved)
-    )
-  } catch (error) {
-    console.warn('锁定当期开奖结果失败', error)
-  }
-
-  return resolved
 }
 
-function writeHistoricalBaselineBacktest(play, strategyId, draw, strategy, analysis) {
-  if (typeof window === 'undefined' || !play || !draw?.expect || !strategy || !analysis) return null
+function finalizeStableBacktestOutcome(play, strategyId, draw, stored) {
+  if (!stored || !draw?.numbers?.length) return stored
+  if (stored.resultLocked) return stored
 
-  try {
-    const existed = readStableBacktest(play, strategyId, draw.expect)
-    if (existed) return existed
-
-    const stored = {
-      version: STABLE_BACKTEST_VERSION,
-      play,
-      strategyId: strategyId || 'auto',
-      expect: String(draw.expect),
-      generatedAt: Date.now(),
-      source: 'historical-baseline-freeze-v17',
-      usedStrategyId: strategy.id || '',
-      usedStrategyLabel: strategy.label || '',
-      recommendNumbers: numberItemsToNumbers(analysis.recommendNumbers),
-      hotNumbers: numberItemsToNumbers(analysis.hotNumbers),
-      coldNumbers: numberItemsToNumbers(analysis.coldNumbers),
-      resultLocked: false,
-    }
-
-    window.localStorage.setItem(
-      getStableBacktestKey(play, strategyId, draw.expect),
-      JSON.stringify(stored)
-    )
-
-    return stored
-  } catch (error) {
-    console.warn('保存历史基准冻结数据失败', error)
+  const resolved = {
+    ...stored,
+    ...makeLockedOutcome(draw, stored),
   }
 
-  return null
+  if (stored.persisted !== false) {
+    const compact = compactStableRecord(resolved)
+    safeSetLocalStorage(
+      getStableBacktestKey(play, strategyId, draw.expect),
+      JSON.stringify(compact),
+      play
+    )
+    return { ...compact, persisted: true }
+  }
+
+  return { ...resolved, persisted: false }
+}
+
+function makeHistoricalBaselineRecord(play, strategyId, draw, strategy, analysis) {
+  const baseline = {
+    version: STABLE_BACKTEST_VERSION,
+    play,
+    strategyId: strategyId || strategy.id || 'auto',
+    expect: String(draw.expect),
+    generatedAt: Date.now(),
+    source: 'historical-calculated-baseline-v19',
+    usedStrategyId: strategy.id || '',
+    recommendNumbers: numberItemsToNumbers(analysis.recommendNumbers),
+    hotNumbers: numberItemsToNumbers(analysis.hotNumbers),
+    coldNumbers: numberItemsToNumbers(analysis.coldNumbers),
+    resultLocked: false,
+    persisted: false,
+  }
+
+  return {
+    ...baseline,
+    ...makeLockedOutcome(draw, baseline),
+    persisted: false,
+  }
 }
 
 function ensureStableBacktestRow(history, index, strategy, play) {
@@ -197,31 +329,77 @@ function ensureStableBacktestRow(history, index, strategy, play) {
   if (beforeHistory.length < getRequiredSampleSize(strategy)) return null
 
   const analysis = buildRecommendByStrategy(beforeHistory, strategy)
-  return writeHistoricalBaselineBacktest(play, strategy.id, draw, strategy, analysis)
+  return makeHistoricalBaselineRecord(play, strategy.id, draw, strategy, analysis)
+}
+
+function compactTop20Snapshot(snapshot) {
+  return {
+    version: TOP20_REALTIME_SNAPSHOT_VERSION,
+    play: snapshot.play,
+    expect: String(snapshot.expect),
+    generatedAt: Number(snapshot.generatedAt || Date.now()),
+    strategies: (snapshot.strategies || []).slice(0, 20).map((strategy, index) => ({
+      rank: Number(strategy.rank || index + 1),
+      id: strategy.id,
+      label: strategy.label,
+      mode: strategy.mode,
+      modeLabel: strategy.modeLabel,
+      desc: strategy.desc,
+      sampleSize: strategy.sampleSize,
+      hotCount: strategy.hotCount,
+      coldCount: strategy.coldCount,
+      score: strategy.score,
+      result100: strategy.result100,
+      result50: strategy.result50,
+    })),
+  }
 }
 
 function readTop20RealtimeSnapshot(play, expect) {
   if (typeof window === 'undefined' || !play || !expect) return null
 
   try {
-    const raw = window.localStorage.getItem(getTop20RealtimeSnapshotKey(play, expect))
-    if (!raw) return null
+    const key = getTop20RealtimeSnapshotKey(play, expect)
+    const raw = window.localStorage.getItem(key)
 
-    const parsed = JSON.parse(raw)
-    if (
-      parsed?.version === TOP20_REALTIME_SNAPSHOT_VERSION &&
-      parsed?.play === play &&
-      String(parsed?.expect) === String(expect) &&
-      Array.isArray(parsed?.strategies)
-    ) {
-      return parsed
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (
+        parsed?.version === TOP20_REALTIME_SNAPSHOT_VERSION &&
+        parsed?.play === play &&
+        String(parsed?.expect) === String(expect) &&
+        Array.isArray(parsed?.strategies)
+      ) {
+        return parsed
+      }
+    }
+
+    for (const version of LEGACY_TOP20_SNAPSHOT_VERSIONS) {
+      const legacyRaw = window.localStorage.getItem(
+        getLegacyTop20RealtimeSnapshotKey(version, play, expect)
+      )
+      if (!legacyRaw) continue
+
+      const legacyParsed = JSON.parse(legacyRaw)
+      if (
+        legacyParsed?.play !== play ||
+        String(legacyParsed?.expect) !== String(expect) ||
+        !Array.isArray(legacyParsed?.strategies)
+      ) {
+        continue
+      }
+
+      const migrated = compactTop20Snapshot(legacyParsed)
+      safeSetLocalStorage(key, JSON.stringify(migrated), play)
+      return migrated
     }
   } catch (error) {
-    console.warn('读取20档位实时快照失败', error)
+    console.warn('读取20档位实时排名快照失败', error)
   }
 
   return null
 }
+
 
 function makeFrozenHitCell(draw, stored, play, strategyId) {
   if (!stored) {
@@ -769,17 +947,93 @@ function getShortStrategyLabel(strategy) {
 }
 
 
+function getTop20StrategiesForDraw(history, drawIndex, currentPlay) {
+  const draw = history?.[drawIndex]
+  if (!draw) {
+    return {
+      strategies: [],
+      hasRealtimeSnapshot: false,
+    }
+  }
+
+  const beforeHistory = history.slice(drawIndex + 1)
+  if (!beforeHistory.length) {
+    return {
+      strategies: [],
+      hasRealtimeSnapshot: false,
+    }
+  }
+
+  // 没有快照的旧历史，严格按照“该期开奖以前的数据”重新计算当时排名。
+  // 因为输入数据固定，所以结果不会随着后续新增开奖而改变。
+  const calculatedRanking = buildRealtimeStrategyRanking(beforeHistory, currentPlay).slice(0, 20)
+  const snapshot = readTop20RealtimeSnapshot(currentPlay, draw.expect)
+
+  if (!snapshot?.strategies?.length) {
+    return {
+      strategies: calculatedRanking,
+      hasRealtimeSnapshot: false,
+    }
+  }
+
+  // 有开奖前快照时，排名位置必须以快照为准。
+  // 即使某个策略以后从第4名升到第2名，也不能改写过去已经开奖期号的列位置。
+  const allCandidates = buildStrategyRanking(beforeHistory)
+  const candidateMap = new Map(allCandidates.map((strategy) => [strategy.id, strategy]))
+
+  const strategies = snapshot.strategies
+    .slice(0, 20)
+    .map((saved, index) => {
+      const calculated = candidateMap.get(saved.id)
+
+      return {
+        ...(calculated || saved),
+        ...saved,
+        rank: Number(saved.rank || index + 1),
+        id: saved.id,
+        label: saved.label || calculated?.label || saved.id,
+      }
+    })
+    .filter((strategy) => strategy?.id)
+
+  return {
+    strategies,
+    hasRealtimeSnapshot: true,
+  }
+}
+
+function decorateStrategyWithStableStats(history, currentPlay, strategy) {
+  const result100 = buildStableStatsForStrategy(history, currentPlay, strategy, 100)
+  const result50 = summarizeStableRows(result100.rows.slice(0, 50))
+  const score = Number(
+    (
+      (Number(result100.hitRate) || 0) * 0.7 +
+      (Number(result50.hitRate) || 0) * 0.3
+    ).toFixed(2)
+  )
+
+  return {
+    ...strategy,
+    result100,
+    result50,
+    score,
+  }
+}
+
 function buildTop20DrawStats(history, currentPlay, rangeSize = 30) {
   if (!history?.length || !currentPlay) return null
 
-  // 与首页保持一致：先使用同一套100期冻结数据重新排序，再展示前20名。
-  const top20 = buildRealtimeStrategyRanking(history, currentPlay).slice(0, 20)
-  if (!top20.length) return null
-
   const latest = history[0]
   const latestSpecial = latest?.numbers?.[latest.numbers.length - 1]
+  const latestRankingData = getTop20StrategiesForDraw(history, 0, currentPlay)
 
-  const latestStats = top20.map((strategy, index) => {
+  if (!latestRankingData.strategies.length) return null
+
+  const latestStrategies = latestRankingData.strategies.map((strategy) =>
+    decorateStrategyWithStableStats(history, currentPlay, strategy)
+  )
+
+  const latestStats = latestStrategies.map((strategy, index) => {
     const stored = ensureStableBacktestRow(history, 0, strategy, currentPlay)
     const cell = makeFrozenHitCell(latest, stored, currentPlay, strategy.id)
     const result30 = summarizeStableRows(strategy.result100.rows.slice(0, 30))
@@ -802,8 +1056,9 @@ function buildTop20DrawStats(history, currentPlay, rangeSize = 30) {
 
   const recentRows = history.slice(0, rangeSize).map((draw, drawIndex) => {
     const specialNumber = draw?.numbers?.[draw.numbers.length - 1]
+    const rowRankingData = getTop20StrategiesForDraw(history, drawIndex, currentPlay)
 
-    const cells = top20.map((strategy, index) => {
+    const cells = rowRankingData.strategies.slice(0, 20).map((strategy, index) => {
       const stored = ensureStableBacktestRow(history, drawIndex, strategy, currentPlay)
       const cell = makeFrozenHitCell(draw, stored, currentPlay, strategy.id)
 
@@ -813,6 +1068,7 @@ function buildTop20DrawStats(history, currentPlay, rangeSize = 30) {
         strategyLabel: strategy.label,
         usedStrategyId: strategy.id,
         usedStrategyLabel: strategy.label,
+        hasRealtimeSnapshot: rowRankingData.hasRealtimeSnapshot,
         ...cell,
         status: cell.shortStatus,
       }
@@ -822,6 +1078,7 @@ function buildTop20DrawStats(history, currentPlay, rangeSize = 30) {
       expect: draw.expect,
       openTime: draw.openTime,
       specialNumber,
+      hasRealtimeSnapshot: rowRankingData.hasRealtimeSnapshot,
       cells,
     }
   })
@@ -832,7 +1089,8 @@ function buildTop20DrawStats(history, currentPlay, rangeSize = 30) {
     latestStats,
     hitRanks,
     recentRows,
-    hasRealtimeRecord: true,
+    hasRealtimeRecord: latestStats.every((item) => !item.unavailable),
+    hasRealtimeSnapshot: latestRankingData.hasRealtimeSnapshot,
   }
 }
 
@@ -1453,6 +1711,10 @@ export default function Top20StatsPage() {
   }
 
   React.useEffect(() => {
+    cleanupStableStorage(currentPlay)
+  }, [currentPlay])
+
+  React.useEffect(() => {
     loadData()
   }, [loadData])
 
@@ -1839,7 +2101,7 @@ export default function Top20StatsPage() {
 
             {!top20DrawStats.hasRealtimeRecord && (
               <div className="error" style={{ margin: '16px 0 0' }}>
-                旧历史首次打开时会生成一次基准回测并立即冻结；从下一期开奖开始继续使用开奖前保存的实时号码。
+                旧历史会严格使用该期以前的数据即时计算；从下一期开奖开始继续使用开奖前保存的真实号码和排名快照。
               </div>
             )}
 
@@ -2064,9 +2326,9 @@ export default function Top20StatsPage() {
           </section>
 
           <section className="card">
-            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V17基准冻结修复版】</div>
+            <div className="card-title">近30期前20名档位中奖 / 不中奖列表【V19完整冻结修复版】</div>
             <p className="desc">
-              【V17基准冻结修复版】旧历史会按当期以前的数据生成一次基准结果并立即冻结；后续新增开奖不会改写旧期号。首页100期数据与本页20档位统计使用同一份冻结记录。
+              【V19完整冻结修复版】旧历史严格按照当期以前的数据即时计算；开奖前真实记录只保存必要快照，避免浏览器缓存写满。每一期前20名的排名位置分别固定，后续名次变化不会改写过去的列位置。首页100期、50期数据与本页20档位统计使用相同公式。
             </p>
 
             <div className="table-wrap">
